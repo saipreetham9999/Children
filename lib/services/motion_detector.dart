@@ -20,44 +20,34 @@ class WMotionDetector {
 
       _frameCount++;
 
-      // First frame: no comparison, just store
       if (_previousFrame == null) {
         _previousFrame = currentFrame;
         print('[WMotion] Frame 1 stored as baseline');
         return false;
       }
 
-      // Compare dimensions
       if (currentFrame.width != _previousFrame!.width ||
           currentFrame.height != _previousFrame!.height) {
         _previousFrame = currentFrame;
         return false;
       }
 
-      // Calculate pixel difference percentage
       double pixelDiffCount = 0;
       final totalPixels =
           currentFrame.width * currentFrame.height;
 
-      for (int i = 0; i < currentFrame.length; i++) {
-        final curr = currentFrame[i];
-        final prev = _previousFrame![i];
+      for (int y = 0; y < currentFrame.height; y++) {
+        for (int x = 0; x < currentFrame.width; x++) {
+          final currPixel = currentFrame.getPixel(x, y);
+          final prevPixel = _previousFrame!.getPixel(x, y);
 
-        // Simple color difference: sum of absolute differences in RGB
-        final currR = img.getRed(curr);
-        final currG = img.getGreen(curr);
-        final currB = img.getBlue(curr);
-        final prevR = img.getRed(prev);
-        final prevG = img.getGreen(prev);
-        final prevB = img.getBlue(prev);
+          final diffR = (currPixel.r - prevPixel.r).abs();
+          final diffG = (currPixel.g - prevPixel.g).abs();
+          final diffB = (currPixel.b - prevPixel.b).abs();
 
-        final diffR = (currR - prevR).abs();
-        final diffG = (currG - prevG).abs();
-        final diffB = (currB - prevB).abs();
-
-        // If any channel differs by > 30 (out of 255), count as changed pixel
-        if (diffR > 30 || diffG > 30 || diffB > 30) {
-          pixelDiffCount++;
+          if (diffR > 30 || diffG > 30 || diffB > 30) {
+            pixelDiffCount++;
+          }
         }
       }
 
@@ -66,9 +56,12 @@ class WMotionDetector {
       _previousFrame = currentFrame;
 
       final isMotion = motionPercentage > motionThreshold;
+
       if (isMotion) {
         _motionDetections++;
-        final percent = (motionPercentage * 100).toStringAsFixed(1);
+        final percent =
+        (motionPercentage * 100).toStringAsFixed(1);
+
         print(
             '[WMotion] Motion detected: $percent% (threshold: ${(motionThreshold * 100).toStringAsFixed(0)}%)');
       }
@@ -76,7 +69,7 @@ class WMotionDetector {
       return isMotion;
     } catch (e) {
       print('[WMotion] Detection error: $e');
-      return false; // Default to no motion on error
+      return false;
     }
   }
 

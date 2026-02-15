@@ -1,5 +1,5 @@
 import 'package:intl/intl.dart';
-
+import 'package:flutter/material.dart';
 /// WAlertModel — Alert received from Brain
 class WAlertModel {
   final String type; // 'alert', 'child_connected', 'child_disconnected'
@@ -60,4 +60,4 @@ class WAlertModel {
   String toString() => 'WAlert($type - $message at $formattedTime)';
 }
 
-import 'package:flutter/material.dart';
+

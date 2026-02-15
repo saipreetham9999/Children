@@ -25,7 +25,7 @@ dependencies:
   path_provider: ^2.1.1
   # Background Service
   flutter_background_service: ^5.0.0
-  flutter_background_service_android: ^5.0.0
+  flutter_background_service_android: ^6.3.1
   flutter_background_service_ios: ^5.0.0
   # Notifications
   flutter_local_notifications: ^17.1.0

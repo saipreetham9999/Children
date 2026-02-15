@@ -1,12 +1,11 @@
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:flutter_background_service_android/flutter_background_service_android.dart';
-import 'package:flutter_background_service_ios/flutter_background_service_ios.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:io';
 import 'brain_service.dart';
 import 'frame_service.dart';
 import 'motion_detector.dart';
+import 'package:flutter/widgets.dart';
 
 /// WBackgroundService — Phase 2.3 continuous monitoring
 /// Runs in background: heartbeat + frame capture + motion detection
@@ -63,29 +62,14 @@ class WBackgroundService {
     }
   }
 
-  /// Stop background service
-  static Future<void> stop() async {
-    try {
-      final service = FlutterBackgroundService();
-      await service.invoke('stopService');
-      print('[WBG] Background service stopped');
-    } catch (e) {
-      print('[WBG] Stop error: $e');
-    }
-  }
-
-  /// Main background task (Phase 2.3)
   @pragma('vm:entry-point')
   static void onStart(ServiceInstance service) async {
-    // Ensure Flutter binding
     WidgetsFlutterBinding.ensureInitialized();
 
-    // Load settings
     prefs = await SharedPreferences.getInstance();
     final brainUrl = prefs.getString('brain_url') ?? 'http://localhost:8080';
     final deviceName = prefs.getString('device_name') ?? 'Unknown';
 
-    // Initialize services
     brainService = WBrainService(brainUrl: brainUrl, deviceName: deviceName);
     frameService = WFrameService();
     motionDetector = WMotionDetector();
@@ -98,56 +82,46 @@ class WBackgroundService {
       return;
     }
 
-    // Foreground notification updater
-    if (service is AndroidServiceInstance) {
-      service.setForegroundNotificationId(888);
-    }
-
-    // Main loop: heartbeat every 5s, frame capture every 2s
     int heartbeatCount = 0;
     int captureCount = 0;
 
-    Timer.periodic(const Duration(seconds: 1), (timer) async {
+    late Timer timer;
+
+    timer = Timer.periodic(const Duration(seconds: 1), (t) async {
       captureCount++;
       heartbeatCount++;
 
       try {
-        // Every 2 seconds: capture frame + motion detect
+        // Capture every 2 seconds
         if (captureCount >= 2) {
           captureCount = 0;
+
           final frameBytes = await frameService.captureFrame();
           final compressed = frameService.compressFrame(frameBytes);
 
-          // Motion detection (Phase 2.2)
           if (motionDetector.detectMotion(compressed)) {
-            // Motion found: send to Brain
             await brainService.sendFrame(compressed);
           }
         }
 
-        // Every 5 seconds: heartbeat + poll events
+        // Heartbeat every 5 seconds
         if (heartbeatCount >= 5) {
           heartbeatCount = 0;
 
-          // Send heartbeat
           await brainService.sendHeartbeat();
 
-          // Poll events
           final events = await brainService.getEvents();
           if (events.isNotEmpty) {
-            // Store last alert for UI
-            prefs.setString(
-              'last_alert',
-              events.first.displayText,
-            );
+            prefs.setString('last_alert', events.first.displayText);
             print('[WBG] Received ${events.length} events');
           }
 
-          // Update notification
+          // 🔥 In v6, you must update notification like this:
           if (service is AndroidServiceInstance) {
-            service.setForegroundNotificationTitle('Worker');
-            service.setForegroundNotificationContent(
-              'Online • Frames sent: ${motionDetector.getStats()['motion_detections']}',
+            service.setForegroundNotificationInfo(
+              title: 'Worker',
+              content:
+              'Online • Frames: ${motionDetector.getStats()['motion_detections']}',
             );
           }
         }
@@ -156,14 +130,12 @@ class WBackgroundService {
       }
     });
 
-    // Handle stop command
-    if (service is AndroidServiceInstance) {
-      service.on('stopService').listen((event) {
-        timer.cancel();
-        frameService.dispose();
-        service.stopSelf();
-      });
-    }
+    // Stop handler
+    service.on('stopService').listen((event) {
+      timer.cancel();
+      frameService.dispose();
+      service.stopSelf();
+    });
   }
 
   /// iOS background handler
@@ -174,4 +146,3 @@ class WBackgroundService {
   }
 }
 
-import 'package:flutter/widgets.dart';
