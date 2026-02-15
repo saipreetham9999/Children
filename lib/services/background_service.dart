@@ -103,44 +103,79 @@ class WBackgroundService {
         // Every 2 seconds: capture + motion detect
         if (captureCount >= 2) {
           captureCount = 0;
+          print('[BG-Loop] 📸 Capture cycle starting...');
           try {
+            print('[BG-Loop] Capturing frame...');
             final frameBytes = await frameService.captureFrame();
-            final compressed = frameService.compressFrame(frameBytes);
+            print('[BG-Loop] ✅ Frame captured: ${frameBytes.length} bytes');
 
-            if (motionDetector.detectMotion(compressed)) {
+            print('[BG-Loop] Compressing frame...');
+            final compressed = frameService.compressFrame(frameBytes);
+            print('[BG-Loop] ✅ Compressed: ${compressed.length} bytes');
+
+            print('[BG-Loop] Detecting motion...');
+            final hasMotion = motionDetector.detectMotion(compressed);
+            print('[BG-Loop] Motion detected: $hasMotion');
+
+            if (hasMotion) {
+              print('[BG-Loop] 🔥 MOTION FOUND! Sending frame to Brain...');
               await brainService.sendFrame(compressed);
+              print('[BG-Loop] ✅ Frame sent to Brain');
+            } else {
+              print('[BG-Loop] No motion, frame discarded');
             }
           } catch (e) {
-            print('[ShaRogai] Frame error: $e');
+            print('[BG-Loop] ❌ Frame error: $e');
+            print('[BG-Loop] Error type: ${e.runtimeType}');
           }
         }
 
         // Every 5 seconds: heartbeat + events
         if (heartbeatCount >= 5) {
           heartbeatCount = 0;
-          await brainService.sendHeartbeat();
+          print('[BG-Loop] 💓 Heartbeat cycle...');
 
-          final events = await brainService.getEvents();
-          if (events.isNotEmpty) {
-            prefs.setString('last_alert', events.first.displayText);
+          try {
+            await brainService.sendHeartbeat();
+            print('[BG-Loop] ✅ Heartbeat sent');
+          } catch (e) {
+            print('[BG-Loop] ❌ Heartbeat error: $e');
+          }
+
+          try {
+            print('[BG-Loop] 📬 Polling events...');
+            final events = await brainService.getEvents();
+            if (events.isNotEmpty) {
+              print('[BG-Loop] 🔔 Got ${events.length} events');
+              prefs.setString('last_alert', events.first.displayText);
+            } else {
+              print('[BG-Loop] No events');
+            }
+          } catch (e) {
+            print('[BG-Loop] ❌ Events error: $e');
           }
 
           // Update notification
           if (service is AndroidServiceInstance) {
-            final stats = motionDetector.getStats();
-            final framesCount = stats['motion_detections'] ?? 0;
             try {
+              final stats = motionDetector.getStats();
+              final framesCount = stats['motion_detections'] ?? 0;
+              final totalFrames = stats['frames_processed'] ?? 0;
+              final rate = stats['detection_rate'] ?? '0.0';
+
               service.setForegroundNotificationTitle('ShaRogai');
               service.setForegroundNotificationContent(
-                '🟢 Online • Frames: $framesCount',
+                '🟢 Online • Frames: $framesCount/$totalFrames ($rate%)',
               );
+              print('[BG-Loop] ✅ Notification updated');
             } catch (e) {
-              print('[ShaRogai] Notification error: $e');
+              print('[BG-Loop] ❌ Notification error: $e');
             }
           }
         }
       } catch (e) {
-        print('[ShaRogai] Loop error: $e');
+        print('[BG-Loop] ❌ LOOP ERROR: $e');
+        print('[BG-Loop] Error type: ${e.runtimeType}');
       }
     });
 
