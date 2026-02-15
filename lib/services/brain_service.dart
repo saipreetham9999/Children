@@ -101,7 +101,11 @@ class WBrainService {
   }
 
   /// POST /api/report — Send frame to Brain for AI processing
-  Future<void> sendFrame(List<int> frameBytes, {String frameType = 'jpeg'}) async {
+  Future<void> sendFrame(
+    List<int> frameBytes, {
+    String frameType = 'jpeg',
+    Map<String, dynamic>? context,
+  }) async {
     try {
       print('[SendFrame] Starting... frame size: ${frameBytes.length} bytes');
 
@@ -120,15 +124,22 @@ class WBrainService {
       print('[SendFrame] URL: $url');
       print('[SendFrame] Device: $deviceName');
 
-      // Build payload
+      // Build payload with context
       final payload = {
         'device_name': deviceName,
         'type': 'frame',
         'frame_type': frameType,
         'data': base64Frame,
+        'timestamp': DateTime.now().toIso8601String(),
+        'context': context ?? {
+          'source': 'manual',
+          'motion': false,
+          'camera_position': 'front',
+        }
       };
 
       print('[SendFrame] Payload keys: ${payload.keys}');
+      print('[SendFrame] Context: ${payload['context']}');
       print('[SendFrame] Sending POST request...');
 
       final response = await http.post(

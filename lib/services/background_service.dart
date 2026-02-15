@@ -93,6 +93,7 @@ class WBackgroundService {
 
     int heartbeatCount = 0;
     int captureCount = 0;
+    int frameCount = 0;
     Timer? bgTimer;
 
     bgTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
@@ -118,8 +119,17 @@ class WBackgroundService {
             print('[BG-Loop] Motion detected: $hasMotion');
 
             if (hasMotion) {
+              frameCount++;
               print('[BG-Loop] 🔥 MOTION FOUND! Sending frame to Brain...');
-              await brainService.sendFrame(compressed);
+              final motionContext = {
+                'source': 'motion_detection',
+                'motion': true,
+                'camera_position': 'front',
+                'timestamp': DateTime.now().toIso8601String(),
+                'frame_number': frameCount,
+                'motion_percentage': '20.0',
+              };
+              await brainService.sendFrame(compressed, context: motionContext);
               print('[BG-Loop] ✅ Frame sent to Brain');
             } else {
               print('[BG-Loop] No motion, frame discarded');

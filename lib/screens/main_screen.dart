@@ -88,18 +88,28 @@ class _WMainScreenState extends State<WMainScreen> {
 
   /// Phase 2.1: Take manual photo
   Future<void> _takePhoto() async {
+    print('[TakePhoto] Starting manual photo capture...');
     setState(() {
       _isCapturing = true;
     });
 
     try {
+      print('[TakePhoto] Initializing frame service...');
       final frameService = WFrameService();
       await frameService.initialize();
+      print('[TakePhoto] ✅ Frame service ready');
 
+      print('[TakePhoto] Capturing frame...');
       final frameBytes = await frameService.captureFrame();
-      final compressed = frameService.compressFrame(frameBytes);
+      print('[TakePhoto] ✅ Frame captured: ${frameBytes.length} bytes');
 
+      print('[TakePhoto] Compressing frame...');
+      final compressed = frameService.compressFrame(frameBytes);
+      print('[TakePhoto] ✅ Compressed: ${compressed.length} bytes');
+
+      print('[TakePhoto] Sending to Brain at ${_brainService.brainUrl}');
       await _brainService.sendFrame(compressed);
+      print('[TakePhoto] ✅ Frame sent successfully');
 
       // Add to alerts
       if (mounted) {
@@ -108,18 +118,36 @@ class _WMainScreenState extends State<WMainScreen> {
             0,
             WAlertModel(
               type: 'manual_photo',
-              message: 'Photo sent to Brain',
+              message: 'Photo sent to Brain (${compressed.length} bytes)',
               severity: 'low',
             ),
           );
         });
       }
 
+      // Show success feedback
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('✅ Photo sent to Brain'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+
       await frameService.dispose();
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Photo failed: $e')),
-      );
+      print('[TakePhoto] ❌ Error: $e');
+      print('[TakePhoto] Error type: ${e.runtimeType}');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('❌ Photo failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -133,9 +161,9 @@ class _WMainScreenState extends State<WMainScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Worker'),
+        title: const Text('ShaRogai'),
         centerTitle: true,
-        backgroundColor: Colors.deepPurple,
+        backgroundColor: Colors.amber,
         actions: [
           Padding(
             padding: const EdgeInsets.all(16),
