@@ -5,11 +5,11 @@ import 'screens/register_screen.dart';
 import 'screens/main_screen.dart';
 import 'services/background_service.dart';
 
-/// Worker — Motion Detection Transmitter App
+/// ShaRogai — Motion Detection & Smart Home Control
 /// Phase MVP: Connect + Register + Status
 /// Phase 2.1: Manual photo capture
 /// Phase 2.2: Motion detection + frame sending
-/// Phase 2.3: Continuous background monitoring
+/// Phase 2.3: Continuous background monitoring + Group commands
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -48,11 +48,11 @@ class WApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Worker',
+      title: 'ShaRogai',
       theme: ThemeData(
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
+          seedColor: Colors.amber,
         ),
       ),
       home: const _WAppRouter(),
@@ -112,10 +112,10 @@ class _WAppRouterState extends State<_WAppRouter> {
                     ),
                   ),
                   SizedBox(height: 16),
-                  Text('Worker'),
+                  Text('ShaRogai'),
                   SizedBox(height: 4),
                   Text(
-                    'Motion Detection Transmitter',
+                    'Motion Detection & Smart Home',
                     style: TextStyle(fontSize: 12, color: Colors.grey),
                   ),
                 ],

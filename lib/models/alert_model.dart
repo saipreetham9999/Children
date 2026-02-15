@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
 /// WAlertModel — Alert received from Brain
@@ -59,5 +60,3 @@ class WAlertModel {
   @override
   String toString() => 'WAlert($type - $message at $formattedTime)';
 }
-
-import 'package:flutter/material.dart';
