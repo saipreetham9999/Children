@@ -44,14 +44,14 @@ class WMotionDetector {
         final curr = currPixels[i];
         final prev = prevPixels[i];
 
-        // Extract RGB using bit shifting
-        final currR = (curr >> 16) & 0xFF;
-        final currG = (curr >> 8) & 0xFF;
-        final currB = curr & 0xFF;
+        // Extract RGB from Pixel object
+        final currR = curr.r.toInt();
+        final currG = curr.g.toInt();
+        final currB = curr.b.toInt();
 
-        final prevR = (prev >> 16) & 0xFF;
-        final prevG = (prev >> 8) & 0xFF;
-        final prevB = prev & 0xFF;
+        final prevR = prev.r.toInt();
+        final prevG = prev.g.toInt();
+        final prevB = prev.b.toInt();
 
         final diffR = (currR - prevR).abs();
         final diffG = (currG - prevG).abs();
