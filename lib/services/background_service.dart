@@ -1,128 +1,207 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
 import 'package:flutter_background_service_android/flutter_background_service_android.dart';
+import 'package:flutter_background_service_ios/flutter_background_service_ios.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
-import 'dart:ui';
+import 'dart:io';
 import 'brain_service.dart';
 import 'frame_service.dart';
 import 'motion_detector.dart';
 
-/// Entry point for the background service
-@pragma('vm:entry-point')
-void onStart(ServiceInstance service) async {
-  DartPluginRegistrant.ensureInitialized();
+/// WBackgroundService — Continuous monitoring for ShaRogai
+/// Runs in background: heartbeat + frame capture + motion detection
+class WBackgroundService {
+  static const String serviceName = 'ShaRogai';
+  static late SharedPreferences prefs;
+  static late WBrainService brainService;
+  static late WFrameService frameService;
+  static late WMotionDetector motionDetector;
 
-  // On Android, configure foreground notification behavior
-  if (service is AndroidServiceInstance) {
-    service.on('setAsForeground').listen((event) {
-      service.setAsForegroundService();
-    });
+  /// Initialize background service
+  static Future<void> initialize() async {
+    try {
+      final service = FlutterBackgroundService();
+      prefs = await SharedPreferences.getInstance();
 
-    service.on('setAsBackground').listen((event) {
-      service.setAsBackgroundService();
-    });
-  }
-
-  service.on('stopService').listen((event) {
-    service.stopSelf();
-  });
-
-  // Initialize background logic
-  final prefs = await SharedPreferences.getInstance();
-  final brainUrl = prefs.getString('brain_url') ?? 'http://192.168.0.183:8080';
-  final deviceName = prefs.getString('device_name') ?? 'Poco-M2-Pro';
-
-  final brainService = WBrainService(brainUrl: brainUrl, deviceName: deviceName);
-  final frameService = WFrameService();
-  final motionDetector = WMotionDetector();
-
-  // Crucial: Give the system time to setup the notification before starting heavy work
-  await Future.delayed(const Duration(seconds: 2));
-
-  try {
-    await frameService.initialize();
-    debugPrint('[Background] Camera initialized');
-  } catch (e) {
-    debugPrint('[Background] Camera Error: $e');
-  }
-
-  // Periodic task: Heartbeat and Motion Detection
-  Timer.periodic(const Duration(seconds: 5), (timer) async {
-    if (service is AndroidServiceInstance) {
-      // Check if service is still supposed to be running
-      if (await service.isForegroundService()) {
-        
-        // 1. Heartbeat to Brain
-        try {
-          await brainService.sendHeartbeat();
-        } catch (e) {
-          debugPrint('[Background] Heartbeat failed: $e');
-        }
-
-        // 2. Motion detection logic
-        try {
-          if (frameService.isInitialized) {
-            final frame = await frameService.captureFrame();
-            if (frame.isNotEmpty) {
-              final compressed = frameService.compressFrame(frame);
-              if (motionDetector.detectMotion(compressed)) {
-                await brainService.sendFrame(compressed);
-              }
-            }
-          }
-        } catch (e) {
-          debugPrint('[Background] Motion detection failed: $e');
-        }
-
-        // 3. Update notification to keep service alive
-        service.setForegroundNotificationInfo(
-          title: "Worker Active",
-          content: "Battery: Monitoring • Brain: Connected",
+      if (Platform.isAndroid) {
+        await service.configure(
+          androidConfiguration: AndroidConfiguration(
+            onStart: onStart,
+            isForegroundMode: true,
+            autoStart: true,
+            notificationChannelId: 'sharogai_channel',
+            initialNotificationTitle: 'ShaRogai',
+            initialNotificationContent: 'Motion Detection Ready',
+            foregroundServiceNotificationId: 888,
+          ),
+          iosConfiguration: IosConfiguration(
+            autoStart: true,
+            onForeground: onStart,
+            onBackground: onIosBackground,
+          ),
         );
       }
+
+      print('[ShaRogai] Background service initialized');
+    } catch (e) {
+      print('[ShaRogai] Init error: $e');
     }
-  });
-}
-
-class WBackgroundService {
-  static Future<void> initialize() async {
-    final service = FlutterBackgroundService();
-
-    await service.configure(
-      androidConfiguration: AndroidConfiguration(
-        onStart: onStart,
-        autoStart: false, // Don't start until user is ready
-        isForegroundMode: true,
-        notificationChannelId: 'worker_channel_01',
-        initialNotificationTitle: 'Worker Service',
-        initialNotificationContent: 'Connecting to Brain...',
-        foregroundServiceNotificationId: 888,
-      ),
-      iosConfiguration: IosConfiguration(
-        autoStart: false,
-        onForeground: onStart,
-        onBackground: onIosBackground,
-      ),
-    );
   }
 
+  /// Start background service
   static Future<void> start() async {
-    final service = FlutterBackgroundService();
-    if (!(await service.isRunning())) {
+    try {
+      final service = FlutterBackgroundService();
       await service.startService();
-      print('[WBG] Background service started');
+      print('[ShaRogai] Background service started');
+    } catch (e) {
+      print('[ShaRogai] Start error: $e');
     }
   }
 
+  /// Stop background service
   static Future<void> stop() async {
-    final service = FlutterBackgroundService();
-    service.invoke('stopService');
+    try {
+      final service = FlutterBackgroundService();
+      service.invoke('stop');
+      print('[ShaRogai] Background service stopped');
+    } catch (e) {
+      print('[ShaRogai] Stop error: $e');
+    }
   }
-}
 
-@pragma('vm:entry-point')
-Future<bool> onIosBackground(ServiceInstance service) async {
-  WidgetsFlutterBinding.ensureInitialized();
-  return true;
+  /// Main background task
+  @pragma('vm:entry-point')
+  static void onStart(ServiceInstance service) async {
+    WidgetsFlutterBinding.ensureInitialized();
+
+    prefs = await SharedPreferences.getInstance();
+    final brainUrl = prefs.getString('brain_url') ?? 'http://localhost:8080';
+    final deviceName = prefs.getString('device_name') ?? 'ShaRogai Device';
+
+    brainService = WBrainService(brainUrl: brainUrl, deviceName: deviceName);
+    frameService = WFrameService();
+    motionDetector = WMotionDetector();
+
+    try {
+      await frameService.initialize();
+      print('[ShaRogai] Camera initialized');
+    } catch (e) {
+      print('[ShaRogai] Camera error: $e');
+      return;
+    }
+
+    int heartbeatCount = 0;
+    int captureCount = 0;
+    int frameCount = 0;
+    Timer? bgTimer;
+
+    bgTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      captureCount++;
+      heartbeatCount++;
+
+      try {
+        // Every 2 seconds: capture + motion detect
+        if (captureCount >= 2) {
+          captureCount = 0;
+          print('[BG-Loop] 📸 Capture cycle starting...');
+          try {
+            print('[BG-Loop] Capturing frame...');
+            final frameBytes = await frameService.captureFrame();
+            print('[BG-Loop] ✅ Frame captured: ${frameBytes.length} bytes');
+
+            print('[BG-Loop] Compressing frame...');
+            final compressed = frameService.compressFrame(frameBytes);
+            print('[BG-Loop] ✅ Compressed: ${compressed.length} bytes');
+
+            print('[BG-Loop] Detecting motion...');
+            final hasMotion = motionDetector.detectMotion(compressed);
+            print('[BG-Loop] Motion detected: $hasMotion');
+
+            if (hasMotion) {
+              frameCount++;
+              print('[BG-Loop] 🔥 MOTION FOUND! Sending frame to Brain...');
+              final motionContext = {
+                'source': 'motion_detection',
+                'motion': true,
+                'camera_position': 'front',
+                'timestamp': DateTime.now().toIso8601String(),
+                'frame_number': frameCount,
+                'motion_percentage': '20.0',
+              };
+              await brainService.sendFrame(compressed, context: motionContext);
+              print('[BG-Loop] ✅ Frame sent to Brain');
+            } else {
+              print('[BG-Loop] No motion, frame discarded');
+            }
+          } catch (e) {
+            print('[BG-Loop] ❌ Frame error: $e');
+            print('[BG-Loop] Error type: ${e.runtimeType}');
+          }
+        }
+
+        // Every 5 seconds: heartbeat + events
+        if (heartbeatCount >= 5) {
+          heartbeatCount = 0;
+          print('[BG-Loop] 💓 Heartbeat cycle...');
+
+          try {
+            await brainService.sendHeartbeat();
+            print('[BG-Loop] ✅ Heartbeat sent');
+          } catch (e) {
+            print('[BG-Loop] ❌ Heartbeat error: $e');
+          }
+
+          try {
+            print('[BG-Loop] 📬 Polling events...');
+            final events = await brainService.getEvents();
+            if (events.isNotEmpty) {
+              print('[BG-Loop] 🔔 Got ${events.length} events');
+              prefs.setString('last_alert', events.first.displayText);
+            } else {
+              print('[BG-Loop] No events');
+            }
+          } catch (e) {
+            print('[BG-Loop] ❌ Events error: $e');
+          }
+
+          // Update notification
+          if (service is AndroidServiceInstance) {
+            try {
+              final stats = motionDetector.getStats();
+              final framesCount = stats['motion_detections'] ?? 0;
+              final totalFrames = stats['frames_processed'] ?? 0;
+              final rate = stats['detection_rate'] ?? '0.0';
+
+              service.setForegroundNotificationTitle('ShaRogai');
+              service.setForegroundNotificationContent(
+                '🟢 Online • Frames: $framesCount/$totalFrames ($rate%)',
+              );
+              print('[BG-Loop] ✅ Notification updated');
+            } catch (e) {
+              print('[BG-Loop] ❌ Notification error: $e');
+            }
+          }
+        }
+      } catch (e) {
+        print('[BG-Loop] ❌ LOOP ERROR: $e');
+        print('[BG-Loop] Error type: ${e.runtimeType}');
+      }
+    });
+
+    // Handle stop
+    if (service is AndroidServiceInstance) {
+      service.on('stop').listen((_) {
+        bgTimer?.cancel();
+        frameService.dispose();
+        service.stopSelf();
+      });
+    }
+  }
+
+  @pragma('vm:entry-point')
+  static Future<bool> onIosBackground(ServiceInstance service) async {
+    WidgetsFlutterBinding.ensureInitialized();
+    return true;
+  }
 }

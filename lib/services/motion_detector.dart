@@ -1,8 +1,8 @@
 import 'package:image/image.dart' as img;
 import 'dart:typed_data';
 
-/// WMotionDetector — On-device motion detection
-/// Compares frames and marks candidates for transmission
+/// ShaRogai Motion Detector — On-device motion detection
+/// Compares frames and only sends candidates when motion detected
 class WMotionDetector {
   img.Image? _previousFrame;
   final double motionThreshold; // 0.0 to 1.0, default 0.15 (15% pixel change)
@@ -20,34 +20,46 @@ class WMotionDetector {
 
       _frameCount++;
 
+      // First frame: no comparison, just store
       if (_previousFrame == null) {
         _previousFrame = currentFrame;
         print('[WMotion] Frame 1 stored as baseline');
         return false;
       }
 
+      // Compare dimensions
       if (currentFrame.width != _previousFrame!.width ||
           currentFrame.height != _previousFrame!.height) {
         _previousFrame = currentFrame;
         return false;
       }
 
+      // Calculate pixel difference percentage
       double pixelDiffCount = 0;
-      final totalPixels =
-          currentFrame.width * currentFrame.height;
+      final totalPixels = currentFrame.width * currentFrame.height;
+      final currPixels = currentFrame.data?.toList() ?? [];
+      final prevPixels = _previousFrame!.data?.toList() ?? [];
 
-      for (int y = 0; y < currentFrame.height; y++) {
-        for (int x = 0; x < currentFrame.width; x++) {
-          final currPixel = currentFrame.getPixel(x, y);
-          final prevPixel = _previousFrame!.getPixel(x, y);
+      for (int i = 0; i < totalPixels && i < currPixels.length && i < prevPixels.length; i++) {
+        final curr = currPixels[i];
+        final prev = prevPixels[i];
 
-          final diffR = (currPixel.r - prevPixel.r).abs();
-          final diffG = (currPixel.g - prevPixel.g).abs();
-          final diffB = (currPixel.b - prevPixel.b).abs();
+        // Extract RGB using bit shifting
+        final currR = (curr >> 16) & 0xFF;
+        final currG = (curr >> 8) & 0xFF;
+        final currB = curr & 0xFF;
 
-          if (diffR > 30 || diffG > 30 || diffB > 30) {
-            pixelDiffCount++;
-          }
+        final prevR = (prev >> 16) & 0xFF;
+        final prevG = (prev >> 8) & 0xFF;
+        final prevB = prev & 0xFF;
+
+        final diffR = (currR - prevR).abs();
+        final diffG = (currG - prevG).abs();
+        final diffB = (currB - prevB).abs();
+
+        // If any channel differs by > 30, count as changed
+        if (diffR > 30 || diffG > 30 || diffB > 30) {
+          pixelDiffCount++;
         }
       }
 
@@ -56,12 +68,9 @@ class WMotionDetector {
       _previousFrame = currentFrame;
 
       final isMotion = motionPercentage > motionThreshold;
-
       if (isMotion) {
         _motionDetections++;
-        final percent =
-        (motionPercentage * 100).toStringAsFixed(1);
-
+        final percent = (motionPercentage * 100).toStringAsFixed(1);
         print(
             '[WMotion] Motion detected: $percent% (threshold: ${(motionThreshold * 100).toStringAsFixed(0)}%)');
       }
@@ -69,7 +78,7 @@ class WMotionDetector {
       return isMotion;
     } catch (e) {
       print('[WMotion] Detection error: $e');
-      return false;
+      return false; // Default to no motion on error
     }
   }
 

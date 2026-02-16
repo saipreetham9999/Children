@@ -101,27 +101,67 @@ class WBrainService {
   }
 
   /// POST /api/report — Send frame to Brain for AI processing
-  Future<void> sendFrame(List<int> frameBytes, {String frameType = 'jpeg'}) async {
+  Future<void> sendFrame(
+    List<int> frameBytes, {
+    String frameType = 'jpeg',
+    Map<String, dynamic>? context,
+  }) async {
     try {
+      print('[SendFrame] Starting... frame size: ${frameBytes.length} bytes');
+
+      if (frameBytes.isEmpty) {
+        print('[SendFrame] ERROR: Frame bytes empty!');
+        return;
+      }
+
+      // Base64 encode
+      print('[SendFrame] Encoding to base64...');
       final base64Frame = base64Encode(frameBytes);
+      print('[SendFrame] Base64 encoded size: ${base64Frame.length} characters');
+
+      // Build URL
+      final url = '$brainUrl/api/report';
+      print('[SendFrame] URL: $url');
+      print('[SendFrame] Device: $deviceName');
+
+      // Build payload with context
+      final payload = {
+        'device_name': deviceName,
+        'type': 'frame',
+        'frame_type': frameType,
+        'data': base64Frame,
+        'timestamp': DateTime.now().toIso8601String(),
+        'context': context ?? {
+          'source': 'manual',
+          'motion': false,
+          'camera_position': 'front',
+        }
+      };
+
+      print('[SendFrame] Payload keys: ${payload.keys}');
+      print('[SendFrame] Context: ${payload['context']}');
+      print('[SendFrame] Sending POST request...');
+
       final response = await http.post(
-        Uri.parse('$brainUrl/api/report'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'device_name': deviceName,
-          'type': 'frame',
-          'frame_type': frameType,
-          'data': base64Frame,
-        }),
-      ).timeout(const Duration(seconds: 10));
+        Uri.parse(url),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(payload),
+      ).timeout(const Duration(seconds: 15));
+
+      print('[SendFrame] Response status: ${response.statusCode}');
+      print('[SendFrame] Response body: ${response.body}');
 
       if (response.statusCode == 200) {
-        print('[WBrain] Frame sent (${frameBytes.length} bytes)');
+        print('[SendFrame] ✅ SUCCESS: Frame sent (${frameBytes.length} bytes)');
       } else {
-        print('[WBrain] Frame send failed: ${response.statusCode}');
+        print('[SendFrame] ❌ FAILED: ${response.statusCode}');
+        print('[SendFrame] Response: ${response.body}');
       }
     } catch (e) {
-      print('[WBrain] Frame send error: $e');
+      print('[SendFrame] ❌ ERROR: $e');
+      print('[SendFrame] ERROR Type: ${e.runtimeType}');
     }
   }
 
