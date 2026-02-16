@@ -1,25 +1,52 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:provider/provider.dart';
 import 'screens/connect_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/main_screen.dart';
+import 'screens/chat_screen.dart';
 import 'services/background_service.dart';
+import 'services/chat_service.dart';
+import 'services/voice_service.dart';
+import 'services/signal_strength_tracker.dart';
+import 'services/speaker_controller.dart';
+import 'services/bluetooth_connectivity.dart';
 
 /// ShaRogai — Motion Detection & Smart Home Control
 /// Phase MVP: Connect + Register + Status
 /// Phase 2.1: Manual photo capture
 /// Phase 2.2: Motion detection + frame sending
 /// Phase 2.3: Continuous background monitoring + Group commands
+/// Phase 3: Group Chat + Voice + Bluetooth + Signal Tracking
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
   // Request permissions FIRST (before background service)
   await _requestPermissions();
 
-  // Initialize background service (Phase 2.3)
+  // Initialize services
   await WBackgroundService.initialize();
+  final chatService = WChatService();
+  await chatService.initialize();
 
-  runApp(const WApp());
+  final voiceService = WVoiceService();
+  await voiceService.initialize();
+
+  final signalTracker = WSignalStrengthTracker();
+  signalTracker.initialize();
+
+  final speakerController = WSpeakerController();
+  await speakerController.initialize();
+
+  final bluetoothConnectivity = WBluetoothConnectivity();
+  await bluetoothConnectivity.initialize();
+
+  runApp(WApp(
+    chatService: chatService,
+    signalTracker: signalTracker,
+    speakerController: speakerController,
+    bluetoothConnectivity: bluetoothConnectivity,
+  ));
 }
 
 /// Request all necessary permissions
@@ -43,27 +70,50 @@ Future<void> _requestPermissions() async {
 }
 
 class WApp extends StatelessWidget {
-  const WApp({Key? key}) : super(key: key);
+  final WChatService chatService;
+  final WSignalStrengthTracker signalTracker;
+  final WSpeakerController speakerController;
+  final WBluetoothConnectivity bluetoothConnectivity;
+
+  const WApp({
+    Key? key,
+    required this.chatService,
+    required this.signalTracker,
+    required this.speakerController,
+    required this.bluetoothConnectivity,
+  }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'ShaRogai',
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.amber,
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<WChatService>.value(value: chatService),
+        ChangeNotifierProvider<WSignalStrengthTracker>.value(
+            value: signalTracker),
+        ChangeNotifierProvider<WSpeakerController>.value(
+            value: speakerController),
+        ChangeNotifierProvider<WBluetoothConnectivity>.value(
+            value: bluetoothConnectivity),
+      ],
+      child: MaterialApp(
+        title: 'ShaRogai',
+        theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(
+            seedColor: Colors.amber,
+          ),
         ),
+        home: const _WAppRouter(),
+        routes: {
+          '/connect': (_) => const WConnectScreen(),
+          '/register': (_) => WRegisterScreen(
+                brainUrl: ModalRoute.of(_)?.settings.arguments as String? ??
+                    'http://localhost:8080',
+              ),
+          '/main': (_) => const WMainScreen(),
+          '/chat': (_) => const WChatScreen(),
+        },
       ),
-      home: const _WAppRouter(),
-      routes: {
-        '/connect': (_) => const WConnectScreen(),
-        '/register': (_) => WRegisterScreen(
-              brainUrl: ModalRoute.of(_)?.settings.arguments as String? ??
-                  'http://localhost:8080',
-            ),
-        '/main': (_) => const WMainScreen(),
-      },
     );
   }
 }
