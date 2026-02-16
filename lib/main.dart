@@ -1,123 +1,61 @@
-import 'dart:async';
-import 'dart:io';
-import 'dart:ui';
-
-import 'package:battery_plus/battery_plus.dart';
-import 'package:children/config.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
 import 'package:permission_handler/permission_handler.dart';
+import 'screens/connect_screen.dart';
+import 'screens/register_screen.dart';
+import 'screens/main_screen.dart';
+import 'services/background_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Request permissions
-  await [
-    Permission.location,
-    Permission.camera,
-    Permission.notification,
-  ].request();
+  // Initialize service config
+  await WBackgroundService.initialize();
 
-  await initializeService();
-  runApp(const MyApp());
+  runApp(const WApp());
 }
 
-Future<void> initializeService() async {
-  final service = FlutterBackgroundService();
+class WApp extends StatefulWidget {
+  const WApp({Key? key}) : super(key: key);
 
-  await service.configure(
-    androidConfiguration: AndroidConfiguration(
-      onStart: onStart,
-      autoStart: true,
-      isForegroundMode: true,
-    ),
-    iosConfiguration: IosConfiguration(
-      autoStart: true,
-      onForeground: onStart,
-      onBackground: onIosBackground,
-    ),
-  );
-
-  service.startService();
+  @override
+  State<WApp> createState() => _WAppState();
 }
 
-@pragma('vm:entry-point')
-Future<bool> onIosBackground(ServiceInstance service) async {
-  return true;
-}
+class _WAppState extends State<WApp> {
+  @override
+  void initState() {
+    super.initState();
+    _requestPermissions();
+  }
 
-@pragma('vm:entry-point')
-void onStart(ServiceInstance service) async {
-  DartPluginRegistrant.ensureInitialized();
-
-  final battery = Battery();
-
-  Timer.periodic(const Duration(seconds: Config.heartbeatInterval), (timer) async {
-    if (service is AndroidServiceInstance) {
-      if (!(await service.isForegroundService())) {
-        return;
-      }
-    }
-
-    // 1. Get Battery Info
-    final batteryLevel = await battery.batteryLevel;
-
-    // 2. Get Location
-    Position? position;
-    try {
-      position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.low,
-      );
-    } catch (e) {
-      print("Error getting location: $e");
-    }
-
-    // 3. Prepare Report
-    final data = {
-      "deviceId": Config.deviceId,
-      "battery": batteryLevel,
-      "location": position != null ? "${position.latitude},${position.longitude}" : "unknown",
-      "timestamp": DateTime.now().toIso8601String(),
-    };
-
-    // 4. Send Heartbeat to Brain
-    try {
-      final response = await http.post(
-        Uri.parse("${Config.baseUrl}/report"),
-        body: data.toString(),
-      );
-      print("Heartbeat sent: ${response.statusCode}");
-    } catch (e) {
-      print("Error sending heartbeat: $e");
-    }
-  });
-}
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  Future<void> _requestPermissions() async {
+    // Critical: Request notification first to avoid service crashes
+    await Permission.notification.request();
+    
+    // Request other essential permissions
+    await [
+      Permission.camera,
+      Permission.location,
+      Permission.locationAlways,
+    ].request();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      home: Scaffold(
-        appBar: AppBar(title: const Text("Worker Node")),
-        body: Center(
-          child: FutureBuilder<http.Response>(
-            future: http.get(Uri.parse("${Config.baseUrl}/status")),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const CircularProgressIndicator();
-              }
-              if (snapshot.hasError) {
-                return Text("Brain Status: Offline (${snapshot.error})");
-              }
-              return Text("Brain Status: ${snapshot.data?.body ?? 'Online'}");
-            },
-          ),
-        ),
+      title: 'ShaRogai Worker',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
+      home: const WConnectScreen(),
+      routes: {
+        '/connect': (_) => const WConnectScreen(),
+        '/register': (_) => WRegisterScreen(
+              brainUrl: (ModalRoute.of(_)?.settings.arguments as Map?)?['brainUrl'] ?? 'http://192.168.0.183:8080',
+            ),
+        '/main': (_) => const WMainScreen(),
+      },
     );
   }
 }

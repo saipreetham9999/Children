@@ -1,5 +1,5 @@
-name: children
-description: A new Flutter project.
+name: worker
+description: Worker app for BRAIN system.
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -10,13 +10,27 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.2
-  flutter_background_service: ^5.0.0
-  battery_plus: ^6.0.0
-  geolocator: ^12.0.0
+  # Camera & Media
   camera: ^0.11.0+1
+  image_picker: ^1.0.4
+  image: ^4.1.3
+  # HTTP & Network
   http: ^1.2.0
+  # Device & System
   device_info_plus: ^10.1.0
   permission_handler: ^11.3.0
+  battery_plus: ^6.0.0
+  # Storage & Preferences
+  shared_preferences: ^2.2.2
+  path_provider: ^2.1.1
+  # Background Service
+  flutter_background_service: ^5.0.0
+  flutter_background_service_android: ^6.3.1
+  flutter_background_service_ios: ^5.0.0
+  # Notifications
+  flutter_local_notifications: ^17.1.0
+  # Date & Time
+  intl: ^0.19.0
 
 dev_dependencies:
   flutter_test:
