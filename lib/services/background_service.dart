@@ -1,7 +1,5 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
-import 'package:flutter_background_service_android/flutter_background_service_android.dart';
-import 'package:flutter_background_service_ios/flutter_background_service_ios.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:async';
 import 'dart:io';
@@ -174,9 +172,9 @@ class WBackgroundService {
               final totalFrames = stats['frames_processed'] ?? 0;
               final rate = stats['detection_rate'] ?? '0.0';
 
-              await service.setAsforeground(
-                notificationTitle: 'ShaRogai',
-                notificationContent: '🟢 Online • Frames: $framesCount/$totalFrames ($rate%)',
+              service.setForegroundNotificationInfo(
+                title: 'ShaRogai',
+                content: '🟢 Online • Frames: $framesCount/$totalFrames ($rate%)',
               );
               print('[BG-Loop] ✅ Notification updated');
             } catch (e) {
