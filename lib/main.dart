@@ -5,12 +5,17 @@ import 'screens/connect_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/main_screen.dart';
 import 'screens/chat_screen.dart';
+import 'screens/child_control_screen.dart';
 import 'services/background_service.dart';
 import 'services/chat_service.dart';
 import 'services/voice_service.dart';
 import 'services/signal_strength_tracker.dart';
 import 'services/speaker_controller.dart';
 import 'services/bluetooth_connectivity.dart';
+import 'services/media_playback_controller.dart';
+import 'services/ios_child_control.dart';
+import 'services/child_os_monitor.dart';
+import 'services/device_policy_service.dart';
 
 /// ShaRogai — Motion Detection & Smart Home Control
 /// Phase MVP: Connect + Register + Status
@@ -18,6 +23,7 @@ import 'services/bluetooth_connectivity.dart';
 /// Phase 2.2: Motion detection + frame sending
 /// Phase 2.3: Continuous background monitoring + Group commands
 /// Phase 3: Group Chat + Voice + Bluetooth + Signal Tracking
+/// Phase 3.5: Media Playback + Child Controls + OS Monitoring + Policy Enforcement
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -41,11 +47,26 @@ void main() async {
   final bluetoothConnectivity = WBluetoothConnectivity();
   await bluetoothConnectivity.initialize();
 
+  final mediaPlayback = WMediaPlaybackController();
+  await mediaPlayback.initialize();
+
+  final childControl = WiOSChildControl();
+  await childControl.initialize();
+
+  final childMonitor = WChildOSMonitor();
+
+  final policyService = WDevicePolicyService();
+  policyService.initialize();
+
   runApp(WApp(
     chatService: chatService,
     signalTracker: signalTracker,
     speakerController: speakerController,
     bluetoothConnectivity: bluetoothConnectivity,
+    mediaPlayback: mediaPlayback,
+    childControl: childControl,
+    childMonitor: childMonitor,
+    policyService: policyService,
   ));
 }
 
@@ -74,6 +95,10 @@ class WApp extends StatelessWidget {
   final WSignalStrengthTracker signalTracker;
   final WSpeakerController speakerController;
   final WBluetoothConnectivity bluetoothConnectivity;
+  final WMediaPlaybackController mediaPlayback;
+  final WiOSChildControl childControl;
+  final WChildOSMonitor childMonitor;
+  final WDevicePolicyService policyService;
 
   const WApp({
     Key? key,
@@ -81,6 +106,10 @@ class WApp extends StatelessWidget {
     required this.signalTracker,
     required this.speakerController,
     required this.bluetoothConnectivity,
+    required this.mediaPlayback,
+    required this.childControl,
+    required this.childMonitor,
+    required this.policyService,
   }) : super(key: key);
 
   @override
@@ -94,6 +123,12 @@ class WApp extends StatelessWidget {
             value: speakerController),
         ChangeNotifierProvider<WBluetoothConnectivity>.value(
             value: bluetoothConnectivity),
+        ChangeNotifierProvider<WMediaPlaybackController>.value(
+            value: mediaPlayback),
+        ChangeNotifierProvider<WiOSChildControl>.value(value: childControl),
+        ChangeNotifierProvider<WChildOSMonitor>.value(value: childMonitor),
+        ChangeNotifierProvider<WDevicePolicyService>.value(
+            value: policyService),
       ],
       child: MaterialApp(
         title: 'ShaRogai',
@@ -112,6 +147,7 @@ class WApp extends StatelessWidget {
               ),
           '/main': (_) => const WMainScreen(),
           '/chat': (_) => const WChatScreen(),
+          '/controls': (_) => const WChildControlScreen(),
         },
       ),
     );
