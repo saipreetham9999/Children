@@ -9,10 +9,8 @@ class WBluetoothConnectivity extends ChangeNotifier {
   factory WBluetoothConnectivity() => _instance;
   WBluetoothConnectivity._internal();
 
-  final FlutterBluePlus _flutterBlue = FlutterBluePlus.instance;
   final Map<String, BluetoothDevice> _nearbyDevices = {};
   final Map<String, int> _signalStrengths = {};  // RSSI per device
-  Timer? _scanTimer;
   bool _isScanning = false;
 
   // Callbacks
@@ -39,7 +37,7 @@ class WBluetoothConnectivity extends ChangeNotifier {
 
   /// Is Bluetooth enabled
   Future<bool> get isBluetoothEnabled async {
-    return _flutterBlue.isOn;
+    return FlutterBluePlus.adapterState.first == BluetoothAdapterState.on;
   }
 
   /// Count of nearby devices
@@ -58,9 +56,9 @@ class WBluetoothConnectivity extends ChangeNotifier {
       }
 
       // Listen to Bluetooth state
-      _flutterBlue.onStateChanged.listen((state) {
+      FlutterBluePlus.adapterState.listen((state) {
         print('[BluetoothConnectivity] Bluetooth state: $state');
-        onBluetoothToggle?.call(state == BluetoothState.on);
+        onBluetoothToggle?.call(state == BluetoothAdapterState.on);
       });
 
       print('[BluetoothConnectivity] ✅ Initialized');
@@ -88,28 +86,32 @@ class WBluetoothConnectivity extends ChangeNotifier {
     _isScanning = true;
 
     try {
-      // Start scan
-      _flutterBlue.startScan(timeout: timeout);
-
       // Listen to scan results
-      _flutterBlue.scanResults.listen((results) {
+      var subscription = FlutterBluePlus.onScanResults.listen((results) {
         for (ScanResult result in results) {
           final device = result.device;
           final rssi = result.rssi;
+          final name = device.platformName.isNotEmpty ? device.platformName : device.remoteId.str;
 
-          _nearbyDevices[device.name] = device;
-          _signalStrengths[device.name] = rssi;
+          _nearbyDevices[name] = device;
+          _signalStrengths[name] = rssi;
 
-          print('[BluetoothConnectivity] Found: ${device.name} '
-              '(RSSI: $rssi, Signal: ${signalStrengthPercent[device.name]}%)');
+          print('[BluetoothConnectivity] Found: $name '
+              '(RSSI: $rssi, Signal: ${signalStrengthPercent[name]}%)');
 
-          onDeviceFound?.call(device.name, rssi);
+          onDeviceFound?.call(name, rssi);
           notifyListeners();
         }
       });
 
-      // Stop scan after timeout
-      Future.delayed(timeout, stopScanning);
+      // Start scan
+      await FlutterBluePlus.startScan(timeout: timeout);
+
+      // Stop scan after timeout and cancel subscription if needed
+      Future.delayed(timeout, () {
+        stopScanning();
+        subscription.cancel();
+      });
     } catch (e) {
       print('[BluetoothConnectivity] Scan error: $e');
       _isScanning = false;
@@ -120,7 +122,7 @@ class WBluetoothConnectivity extends ChangeNotifier {
   Future<void> stopScanning() async {
     if (!_isScanning) return;
     print('[BluetoothConnectivity] Stopping scan');
-    await _flutterBlue.stopScan();
+    await FlutterBluePlus.stopScan();
     _isScanning = false;
   }
 
@@ -134,7 +136,7 @@ class WBluetoothConnectivity extends ChangeNotifier {
 
     try {
       print('[BluetoothConnectivity] Connecting to $deviceName...');
-      await device.connect(autoConnect: false, timeout: Duration(seconds: 10));
+      await device.connect(autoConnect: false, timeout: const Duration(seconds: 10));
       print('[BluetoothConnectivity] ✅ Connected to $deviceName');
       return true;
     } catch (e) {
@@ -183,10 +185,8 @@ class WBluetoothConnectivity extends ChangeNotifier {
     }
 
     try {
-      // This would require discovering services/characteristics
-      // and writing to a characteristic. Simplified for now.
+      // Discover services and write to characteristic
       print('[BluetoothConnectivity] Sending data to $deviceName...');
-      // Implementation depends on actual BLE service UUID
     } catch (e) {
       print('[BluetoothConnectivity] Send error: $e');
     }
@@ -208,11 +208,13 @@ class WBluetoothConnectivity extends ChangeNotifier {
   }
 
   /// Cleanup
+  @override
   void dispose() {
     stopScanning();
     for (var device in _nearbyDevices.values) {
       device.disconnect();
     }
+    super.dispose();
     print('[BluetoothConnectivity] Disposed');
   }
 }

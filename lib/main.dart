@@ -1,216 +1,179 @@
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
-import 'screens/connect_screen.dart';
-import 'screens/register_screen.dart';
-import 'screens/main_screen.dart';
-import 'screens/chat_screen.dart';
-import 'screens/child_control_screen.dart';
-import 'services/background_service.dart';
-import 'services/chat_service.dart';
-import 'services/voice_service.dart';
-import 'services/signal_strength_tracker.dart';
-import 'services/speaker_controller.dart';
-import 'services/bluetooth_connectivity.dart';
-import 'services/media_playback_controller.dart';
-import 'services/ios_child_control.dart';
-import 'services/child_os_monitor.dart';
-import 'services/device_policy_service.dart';
+import 'dart:async';
 
-/// ShaRogai — Motion Detection & Smart Home Control
-/// Phase MVP: Connect + Register + Status
-/// Phase 2.1: Manual photo capture
-/// Phase 2.2: Motion detection + frame sending
-/// Phase 2.3: Continuous background monitoring + Group commands
-/// Phase 3: Group Chat + Voice + Bluetooth + Signal Tracking
-/// Phase 3.5: Media Playback + Child Controls + OS Monitoring + Policy Enforcement
+// Screens
+import 'package:worker/screens/connect_screen.dart';
+import 'package:worker/screens/register_screen.dart';
+import 'package:worker/screens/main_screen.dart';
+import 'package:worker/screens/chat_screen.dart';
+import 'package:worker/screens/child_control_screen.dart';
+
+// Services
+import 'package:worker/services/background_service.dart';
+import 'package:worker/services/chat_service.dart';
+import 'package:worker/services/voice_service.dart';
+import 'package:worker/services/signal_strength_tracker.dart';
+import 'package:worker/services/speaker_controller.dart';
+import 'package:worker/services/bluetooth_connectivity.dart';
+import 'package:worker/services/media_playback_controller.dart';
+import 'package:worker/services/ios_child_control.dart';
+import 'package:worker/services/child_os_monitor.dart';
+import 'package:worker/services/device_policy_service.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Request permissions FIRST (before background service)
-  await _requestPermissions();
-
-  // Initialize services
+  // 1. Initial configuration (No hardware access yet)
   await WBackgroundService.initialize();
-  final chatService = WChatService();
-  await chatService.initialize();
 
-  final voiceService = WVoiceService();
-  await voiceService.initialize();
-
-  final signalTracker = WSignalStrengthTracker();
-  signalTracker.initialize();
-
-  final speakerController = WSpeakerController();
-  await speakerController.initialize();
-
-  final bluetoothConnectivity = WBluetoothConnectivity();
-  await bluetoothConnectivity.initialize();
-
-  final mediaPlayback = WMediaPlaybackController();
-  await mediaPlayback.initialize();
-
-  final childControl = WiOSChildControl();
-  await childControl.initialize();
-
-  final childMonitor = WChildOSMonitor();
-
-  final policyService = WDevicePolicyService();
-  policyService.initialize();
-
-  runApp(WApp(
-    chatService: chatService,
-    signalTracker: signalTracker,
-    speakerController: speakerController,
-    bluetoothConnectivity: bluetoothConnectivity,
-    mediaPlayback: mediaPlayback,
-    childControl: childControl,
-    childMonitor: childMonitor,
-    policyService: policyService,
-  ));
+  runApp(const WAppBootstrapper());
 }
 
-/// Request all necessary permissions
-Future<void> _requestPermissions() async {
-  final permissions = [
-    Permission.camera,
-    Permission.microphone,
-    Permission.location,
-    Permission.storage,
-  ];
-
-  for (var permission in permissions) {
-    final status = await permission.request();
-    print('[Permissions] ${permission.toString()}: ${status.isDenied}');
-  }
-
-  // Background permission (Android 12+)
-  if (await Permission.notification.isDenied) {
-    await Permission.notification.request();
-  }
-}
-
-class WApp extends StatelessWidget {
-  final WChatService chatService;
-  final WSignalStrengthTracker signalTracker;
-  final WSpeakerController speakerController;
-  final WBluetoothConnectivity bluetoothConnectivity;
-  final WMediaPlaybackController mediaPlayback;
-  final WiOSChildControl childControl;
-  final WChildOSMonitor childMonitor;
-  final WDevicePolicyService policyService;
-
-  const WApp({
-    Key? key,
-    required this.chatService,
-    required this.signalTracker,
-    required this.speakerController,
-    required this.bluetoothConnectivity,
-    required this.mediaPlayback,
-    required this.childControl,
-    required this.childMonitor,
-    required this.policyService,
-  }) : super(key: key);
+/// A Bootstrapper that handles permissions and gradual service initialization
+/// to prevent crashes on Poco/Xiaomi devices.
+class WAppBootstrapper extends StatefulWidget {
+  const WAppBootstrapper({Key? key}) : super(key: key);
 
   @override
-  Widget build(BuildContext context) {
-    return MultiProvider(
-      providers: [
-        ChangeNotifierProvider<WChatService>.value(value: chatService),
-        ChangeNotifierProvider<WSignalStrengthTracker>.value(
-            value: signalTracker),
-        ChangeNotifierProvider<WSpeakerController>.value(
-            value: speakerController),
-        ChangeNotifierProvider<WBluetoothConnectivity>.value(
-            value: bluetoothConnectivity),
-        ChangeNotifierProvider<WMediaPlaybackController>.value(
-            value: mediaPlayback),
-        ChangeNotifierProvider<WiOSChildControl>.value(value: childControl),
-        ChangeNotifierProvider<WChildOSMonitor>.value(value: childMonitor),
-        ChangeNotifierProvider<WDevicePolicyService>.value(
-            value: policyService),
-      ],
-      child: MaterialApp(
-        title: 'ShaRogai',
-        theme: ThemeData(
-          useMaterial3: true,
-          colorScheme: ColorScheme.fromSeed(
-            seedColor: Colors.amber,
-          ),
-        ),
-        home: const _WAppRouter(),
-        routes: {
-          '/connect': (_) => const WConnectScreen(),
-          '/register': (_) => WRegisterScreen(
-                brainUrl: ModalRoute.of(_)?.settings.arguments as String? ??
-                    'http://localhost:8080',
-              ),
-          '/main': (_) => const WMainScreen(),
-          '/chat': (_) => const WChatScreen(),
-          '/controls': (_) => const WChildControlScreen(),
-        },
-      ),
-    );
-  }
+  State<WAppBootstrapper> createState() => _WAppBootstrapperState();
 }
 
-/// App router — Navigate based on state
-class _WAppRouter extends StatefulWidget {
-  const _WAppRouter({Key? key}) : super(key: key);
-
-  @override
-  State<_WAppRouter> createState() => _WAppRouterState();
-}
-
-class _WAppRouterState extends State<_WAppRouter> {
-  late Future<String> _initRoute;
+class _WAppBootstrapperState extends State<WAppBootstrapper> {
+  bool _isReady = false;
+  
+  // All Services
+  late WChatService chatService;
+  late WSignalStrengthTracker signalTracker;
+  late WSpeakerController speakerController;
+  late WBluetoothConnectivity bluetoothConnectivity;
+  late WMediaPlaybackController mediaPlayback;
+  late WiOSChildControl childControl;
+  late WChildOSMonitor childMonitor;
+  late WDevicePolicyService policyService;
 
   @override
   void initState() {
     super.initState();
-    _initRoute = _determineInitialRoute();
+    _initializeApp();
   }
 
-  Future<String> _determineInitialRoute() async {
-    await Future.delayed(const Duration(milliseconds: 500));
+  Future<void> _initializeApp() async {
+    try {
+      // 1. Permissions - Mandatory first step
+      print('[Boot] Requesting Permissions...');
+      await Permission.notification.request();
+      await [
+        Permission.camera,
+        Permission.microphone,
+        Permission.location,
+        Permission.locationAlways,
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+      ].request();
 
-    // Check if already registered
-    // (in real app, check SharedPreferences)
-    return '/connect'; // Always start with connect
+      // Give the OS 1 second to settle after permission dialogs
+      await Future.delayed(const Duration(seconds: 1));
+
+      // 2. Gradual Service Initialization (Avoid resource contention)
+      print('[Boot] Initializing Services...');
+      
+      chatService = WChatService();
+      await chatService.initialize();
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      final voiceService = WVoiceService();
+      await voiceService.initialize();
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      signalTracker = WSignalStrengthTracker();
+      signalTracker.initialize();
+
+      speakerController = WSpeakerController();
+      await speakerController.initialize();
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      bluetoothConnectivity = WBluetoothConnectivity();
+      await bluetoothConnectivity.initialize();
+      await Future.delayed(const Duration(milliseconds: 200));
+
+      mediaPlayback = WMediaPlaybackController();
+      await mediaPlayback.initialize();
+
+      childControl = WiOSChildControl();
+      await childControl.initialize();
+
+      childMonitor = WChildOSMonitor();
+
+      policyService = WDevicePolicyService();
+      policyService.initialize();
+
+      print('[Boot] ✅ All systems ready');
+      if (mounted) {
+        setState(() => _isReady = true);
+      }
+    } catch (e) {
+      print('[Boot] ❌ Fatal Setup Error: $e');
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<String>(
-      future: _initRoute,
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Scaffold(
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: 80,
-                    height: 80,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 3,
-                    ),
-                  ),
-                  SizedBox(height: 16),
-                  Text('ShaRogai'),
-                  SizedBox(height: 4),
-                  Text(
-                    'Motion Detection & Smart Home',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
+    if (!_isReady) {
+      return MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const CircularProgressIndicator(color: Colors.amber),
+                const SizedBox(height: 24),
+                const Text('Initializing ShaRogai...', style: TextStyle(fontWeight: FontWeight.bold)),
+                const Text('Setting up secure services', style: TextStyle(color: Colors.grey, fontSize: 12)),
+              ],
             ),
-          );
-        }
+          ),
+        ),
+      );
+    }
 
-        return const WConnectScreen();
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<WChatService>.value(value: chatService),
+        ChangeNotifierProvider<WSignalStrengthTracker>.value(value: signalTracker),
+        ChangeNotifierProvider<WSpeakerController>.value(value: speakerController),
+        ChangeNotifierProvider<WBluetoothConnectivity>.value(value: bluetoothConnectivity),
+        ChangeNotifierProvider<WMediaPlaybackController>.value(value: mediaPlayback),
+        ChangeNotifierProvider<WiOSChildControl>.value(value: childControl),
+        ChangeNotifierProvider<WChildOSMonitor>.value(value: childMonitor),
+        ChangeNotifierProvider<WDevicePolicyService>.value(value: policyService),
+      ],
+      child: const WAppContent(),
+    );
+  }
+}
+
+class WAppContent extends StatelessWidget {
+  const WAppContent({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'ShaRogai',
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
+      ),
+      home: const WConnectScreen(),
+      routes: {
+        '/connect': (_) => const WConnectScreen(),
+        '/register': (_) => WRegisterScreen(
+              brainUrl: (ModalRoute.of(_)?.settings.arguments as Map?)?['brainUrl'] ?? 'http://192.168.0.183:8080',
+            ),
+        '/main': (_) => const WMainScreen(),
+        '/chat': (_) => const WChatScreen(),
+        '/controls': (_) => const WChildControlScreen(),
       },
     );
   }
