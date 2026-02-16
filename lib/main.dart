@@ -5,126 +5,56 @@ import 'screens/register_screen.dart';
 import 'screens/main_screen.dart';
 import 'services/background_service.dart';
 
-/// ShaRogai — Motion Detection & Smart Home Control
-/// Phase MVP: Connect + Register + Status
-/// Phase 2.1: Manual photo capture
-/// Phase 2.2: Motion detection + frame sending
-/// Phase 2.3: Continuous background monitoring + Group commands
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Request permissions FIRST (before background service)
-  await _requestPermissions();
-
-  // Initialize background service (Phase 2.3)
+  // Initialize service config
   await WBackgroundService.initialize();
 
   runApp(const WApp());
 }
 
-/// Request all necessary permissions
-Future<void> _requestPermissions() async {
-  final permissions = [
-    Permission.camera,
-    Permission.microphone,
-    Permission.location,
-    Permission.storage,
-  ];
+class WApp extends StatefulWidget {
+  const WApp({Key? key}) : super(key: key);
 
-  for (var permission in permissions) {
-    final status = await permission.request();
-    print('[Permissions] ${permission.toString()}: ${status.isDenied}');
-  }
-
-  // Background permission (Android 12+)
-  if (await Permission.notification.isDenied) {
-    await Permission.notification.request();
-  }
+  @override
+  State<WApp> createState() => _WAppState();
 }
 
-class WApp extends StatelessWidget {
-  const WApp({Key? key}) : super(key: key);
+class _WAppState extends State<WApp> {
+  @override
+  void initState() {
+    super.initState();
+    _requestPermissions();
+  }
+
+  Future<void> _requestPermissions() async {
+    // Critical: Request notification first to avoid service crashes
+    await Permission.notification.request();
+    
+    // Request other essential permissions
+    await [
+      Permission.camera,
+      Permission.location,
+      Permission.locationAlways,
+    ].request();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'ShaRogai',
+      title: 'ShaRogai Worker',
       theme: ThemeData(
         useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.amber,
-        ),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
-      home: const _WAppRouter(),
+      home: const WConnectScreen(),
       routes: {
         '/connect': (_) => const WConnectScreen(),
         '/register': (_) => WRegisterScreen(
-              brainUrl: ModalRoute.of(_)?.settings.arguments as String? ??
-                  'http://localhost:8080',
+              brainUrl: (ModalRoute.of(_)?.settings.arguments as Map?)?['brainUrl'] ?? 'http://192.168.0.183:8080',
             ),
         '/main': (_) => const WMainScreen(),
-      },
-    );
-  }
-}
-
-/// App router — Navigate based on state
-class _WAppRouter extends StatefulWidget {
-  const _WAppRouter({Key? key}) : super(key: key);
-
-  @override
-  State<_WAppRouter> createState() => _WAppRouterState();
-}
-
-class _WAppRouterState extends State<_WAppRouter> {
-  late Future<String> _initRoute;
-
-  @override
-  void initState() {
-    super.initState();
-    _initRoute = _determineInitialRoute();
-  }
-
-  Future<String> _determineInitialRoute() async {
-    await Future.delayed(const Duration(milliseconds: 500));
-
-    // Check if already registered
-    // (in real app, check SharedPreferences)
-    return '/connect'; // Always start with connect
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<String>(
-      future: _initRoute,
-      builder: (context, snapshot) {
-        if (!snapshot.hasData) {
-          return const Scaffold(
-            body: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  SizedBox(
-                    width: 80,
-                    height: 80,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 3,
-                    ),
-                  ),
-                  SizedBox(height: 16),
-                  Text('ShaRogai'),
-                  SizedBox(height: 4),
-                  Text(
-                    'Motion Detection & Smart Home',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                ],
-              ),
-            ),
-          );
-        }
-
-        return const WConnectScreen();
       },
     );
   }
