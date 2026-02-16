@@ -117,7 +117,9 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
       }
 
       if (mounted) {
-        Navigator.of(context).pushReplacementNamed('/main');
+        // Go to transition screen — it shows progress for 2.5s then navigates to /main
+        // This gives Phase 2 services time to finish loading
+        Navigator.of(context).pushReplacementNamed('/transition');
       }
     } catch (e) {
       setState(() {
