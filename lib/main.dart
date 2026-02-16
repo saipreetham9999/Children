@@ -268,7 +268,7 @@ class _WApp extends StatelessWidget {
         '/connect': (_) => const WConnectScreen(),
         '/register': (_) => WRegisterScreen(
               brainUrl: (ModalRoute.of(_)?.settings.arguments as Map?)?['brainUrl']
-                  ?? 'http://192.168.0.183:8080',
+                  ?? '',
             ),
         // Transition screen — shown after register, navigates to /main after 2.5s
         '/transition': (_) => const WTransitionScreen(
