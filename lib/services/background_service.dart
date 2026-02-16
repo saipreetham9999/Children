@@ -100,9 +100,17 @@ class WBackgroundService {
       heartbeatCount++;
 
       try {
-        // Every 2 seconds: capture + motion detect
+        // Every 2 seconds: capture + motion detect (if enabled)
         if (captureCount >= 2) {
           captureCount = 0;
+
+          // Check if motion detection is enabled
+          final motionEnabled = prefs.getBool('motion_enabled') ?? true;
+          if (!motionEnabled) {
+            print('[BG-Loop] ⏸️  Motion detection disabled, skipping capture');
+            return;
+          }
+
           print('[BG-Loop] 📸 Capture cycle starting...');
           try {
             print('[BG-Loop] Capturing frame...');
@@ -164,7 +172,7 @@ class WBackgroundService {
             print('[BG-Loop] ❌ Events error: $e');
           }
 
-          // Update notification
+          // Update notification (Android notification update - safe method)
           if (service is AndroidServiceInstance) {
             try {
               final stats = motionDetector.getStats();
