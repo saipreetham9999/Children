@@ -10,13 +10,14 @@ import 'package:worker/screens/register_screen.dart';
 import 'package:worker/screens/main_screen.dart';
 import 'package:worker/screens/chat_screen.dart';
 import 'package:worker/screens/child_control_screen.dart';
+import 'package:worker/screens/transition_screen.dart';
 
-// Services — critical (always loaded before UI)
-import 'package:worker/services/background_service.dart';
+// Services — Phase 1: critical (tiny, fast)
 import 'package:worker/services/chat_service.dart';
 import 'package:worker/services/signal_strength_tracker.dart';
 
-// Services — optional (loaded lazily in background)
+// Services — Phase 2: optional (heavy, deferred)
+import 'package:worker/services/background_service.dart';
 import 'package:worker/services/voice_service.dart';
 import 'package:worker/services/speaker_controller.dart';
 import 'package:worker/services/bluetooth_connectivity.dart';
@@ -25,19 +26,19 @@ import 'package:worker/services/ios_child_control.dart';
 import 'package:worker/services/child_os_monitor.dart';
 import 'package:worker/services/device_policy_service.dart';
 
-/// main() — Fast boot: only start background service, show UI immediately.
-/// Everything else loads after the screen is visible.
+/// main() — FAST boot: no blocking I/O here.
+/// Notification channels are created natively in MainActivity.kt BEFORE this runs.
+/// Background service init is deferred to Phase 2 (after UI is visible).
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  // Only the non-hardware background service channel setup — no blocking I/O
-  await WBackgroundService.initialize();
-
+  // Nothing heavy here — just launch the app
   runApp(const WAppBootstrapper());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WAppBootstrapper — Phase 1: Show UI instantly, Phase 2: Load services
+// WAppBootstrapper — Two-phase loading
+//   Phase 1 (~0.5s): permissions + chat + signal → UI visible immediately
+//   Phase 2 (background): all heavy services load silently
 // ─────────────────────────────────────────────────────────────────────────────
 
 class WAppBootstrapper extends StatefulWidget {
@@ -48,11 +49,11 @@ class WAppBootstrapper extends StatefulWidget {
 }
 
 class _WAppBootstrapperState extends State<WAppBootstrapper> {
-  // ── Phase 1: Critical services (needed before ANY screen) ─────────────────
+  // ── Phase 1 services ─────────────────────────────────────────────────────
   WChatService? _chatService;
   WSignalStrengthTracker? _signalTracker;
 
-  // ── Phase 2: Optional services (loaded after UI is up) ───────────────────
+  // ── Phase 2 services ─────────────────────────────────────────────────────
   WSpeakerController? _speakerController;
   WBluetoothConnectivity? _bluetoothConnectivity;
   WMediaPlaybackController? _mediaPlayback;
@@ -60,98 +61,89 @@ class _WAppBootstrapperState extends State<WAppBootstrapper> {
   WChildOSMonitor? _childMonitor;
   WDevicePolicyService? _policyService;
 
-  // Boot state
-  bool _criticalReady = false;   // Phase 1 done → show UI
-  bool _optionalReady = false;   // Phase 2 done → all services up
+  bool _uiReady = false;      // Phase 1 done → show UI
+  bool _allReady = false;     // Phase 2 done → all providers injected
   String _bootStatus = 'Starting...';
 
   @override
   void initState() {
     super.initState();
-    _bootPhase1();
+    _phase1();
   }
 
-  // ── Phase 1: Permissions + Critical services (~0.5s) ─────────────────────
-  Future<void> _bootPhase1() async {
+  // ── Phase 1: ~0.5s — permissions + 2 lightweight services ────────────────
+  Future<void> _phase1() async {
     _setStatus('Requesting permissions...');
     await _requestPermissions();
 
-    _setStatus('Starting core services...');
-    try {
+    _setStatus('Starting core...');
+
+    await _safe(() async {
       _chatService = WChatService();
       await _chatService!.initialize();
-    } catch (e) {
-      print('[Boot P1] ChatService error (non-fatal): $e');
-      _chatService = WChatService(); // fallback: uninit is fine
-    }
+    }, 'ChatService');
 
-    try {
+    await _safe(() async {
       _signalTracker = WSignalStrengthTracker();
       _signalTracker!.initialize();
-    } catch (e) {
-      print('[Boot P1] SignalTracker error (non-fatal): $e');
-      _signalTracker = WSignalStrengthTracker();
-    }
+    }, 'SignalTracker');
 
-    // ✅ UI is ready — show the app NOW
+    // Fallbacks so providers always have a value
+    _chatService ??= WChatService();
+    _signalTracker ??= WSignalStrengthTracker();
+
     _setStatus('Ready');
-    if (mounted) setState(() => _criticalReady = true);
+    if (mounted) setState(() => _uiReady = true);
 
-    // Phase 2 runs in background — does NOT block the UI
-    _bootPhase2();
+    // Don't await — Phase 2 runs completely in the background
+    _phase2();
   }
 
-  // ── Phase 2: Optional heavy services (background, ~2-4s) ─────────────────
-  Future<void> _bootPhase2() async {
-    print('[Boot P2] Loading optional services in background...');
+  // ── Phase 2: background — all heavy/hardware services ────────────────────
+  Future<void> _phase2() async {
+    print('[Boot P2] Starting background services...');
+
+    // Background service MUST come first so channel exists when service starts
+    await _safe(() => WBackgroundService.initialize(), 'BackgroundService');
+    await Future.delayed(const Duration(milliseconds: 100));
 
     _speakerController = WSpeakerController();
-    await _safeInit(() => _speakerController!.initialize(), 'SpeakerController');
-    await Future.delayed(const Duration(milliseconds: 150));
+    await _safe(() => _speakerController!.initialize(), 'SpeakerController');
+    await Future.delayed(const Duration(milliseconds: 100));
 
     _mediaPlayback = WMediaPlaybackController();
-    await _safeInit(() => _mediaPlayback!.initialize(), 'MediaPlayback');
-    await Future.delayed(const Duration(milliseconds: 150));
+    await _safe(() => _mediaPlayback!.initialize(), 'MediaPlayback');
+    await Future.delayed(const Duration(milliseconds: 100));
 
     _bluetoothConnectivity = WBluetoothConnectivity();
-    await _safeInit(() => _bluetoothConnectivity!.initialize(), 'Bluetooth');
-    await Future.delayed(const Duration(milliseconds: 150));
+    await _safe(() => _bluetoothConnectivity!.initialize(), 'Bluetooth');
+    await Future.delayed(const Duration(milliseconds: 100));
 
     _childControl = WiOSChildControl();
-    await _safeInit(() => _childControl!.initialize(), 'iOSChildControl');
+    await _safe(() => _childControl!.initialize(), 'iOSChildControl');
 
     _childMonitor = WChildOSMonitor();
 
     _policyService = WDevicePolicyService();
-    _safeRun(() => _policyService!.initialize(), 'PolicyService');
+    try { _policyService!.initialize(); } catch (e) { print('[Boot P2] PolicyService: $e'); }
 
-    // VoiceService (last — heaviest)
-    await Future.delayed(const Duration(milliseconds: 200));
-    await _safeInit(() async {
+    // VoiceService last — heaviest hardware access
+    await Future.delayed(const Duration(milliseconds: 150));
+    await _safe(() async {
       final v = WVoiceService();
       await v.initialize();
     }, 'VoiceService');
 
-    print('[Boot P2] ✅ All optional services loaded');
-
-    // Trigger a rebuild to inject optional providers
-    if (mounted) setState(() => _optionalReady = true);
+    print('[Boot P2] ✅ All services loaded');
+    if (mounted) setState(() => _allReady = true);
   }
 
-  Future<void> _safeInit(Future<void> Function() fn, String name) async {
+  Future<void> _safe(Future<void> Function() fn, String name) async {
     try {
       await fn();
-      print('[Boot P2] ✅ $name ready');
+      print('[Boot] ✅ $name');
     } catch (e) {
-      print('[Boot P2] ⚠️  $name failed (non-fatal): $e');
-    }
-  }
-
-  void _safeRun(void Function() fn, String name) {
-    try {
-      fn();
-    } catch (e) {
-      print('[Boot P2] ⚠️  $name failed (non-fatal): $e');
+      print('[Boot] ⚠️  $name failed (non-fatal): $e');
     }
   }
 
@@ -159,7 +151,6 @@ class _WAppBootstrapperState extends State<WAppBootstrapper> {
     if (mounted) setState(() => _bootStatus = s);
   }
 
-  // ── Permissions ──────────────────────────────────────────────────────────
   Future<void> _requestPermissions() async {
     try {
       await Permission.notification.request();
@@ -171,62 +162,56 @@ class _WAppBootstrapperState extends State<WAppBootstrapper> {
         Permission.bluetoothConnect,
       ].request();
     } catch (e) {
-      print('[Boot] Permission error (non-fatal): $e');
+      print('[Boot] Permissions error (non-fatal): $e');
     }
   }
 
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    // Phase 1 not done yet — show minimal splash
-    if (!_criticalReady) {
+    if (!_uiReady) {
       return MaterialApp(
         debugShowCheckedModeBanner: false,
-        home: _SplashScreen(status: _bootStatus),
+        home: _BootSplash(status: _bootStatus),
       );
     }
 
-    // Build provider list — always add critical, add optional when ready
+    // Always-present providers (Phase 1)
     final providers = <ChangeNotifierProvider>[
       ChangeNotifierProvider<WChatService>.value(value: _chatService!),
       ChangeNotifierProvider<WSignalStrengthTracker>.value(value: _signalTracker!),
     ];
 
-    if (_optionalReady) {
-      if (_speakerController != null) {
+    // Phase 2 providers injected once ready
+    if (_allReady) {
+      if (_speakerController != null)
         providers.add(ChangeNotifierProvider<WSpeakerController>.value(value: _speakerController!));
-      }
-      if (_bluetoothConnectivity != null) {
+      if (_bluetoothConnectivity != null)
         providers.add(ChangeNotifierProvider<WBluetoothConnectivity>.value(value: _bluetoothConnectivity!));
-      }
-      if (_mediaPlayback != null) {
+      if (_mediaPlayback != null)
         providers.add(ChangeNotifierProvider<WMediaPlaybackController>.value(value: _mediaPlayback!));
-      }
-      if (_childControl != null) {
+      if (_childControl != null)
         providers.add(ChangeNotifierProvider<WiOSChildControl>.value(value: _childControl!));
-      }
-      if (_childMonitor != null) {
+      if (_childMonitor != null)
         providers.add(ChangeNotifierProvider<WChildOSMonitor>.value(value: _childMonitor!));
-      }
-      if (_policyService != null) {
+      if (_policyService != null)
         providers.add(ChangeNotifierProvider<WDevicePolicyService>.value(value: _policyService!));
-      }
     }
 
     return MultiProvider(
       providers: providers,
-      child: WAppContent(optionalServicesReady: _optionalReady),
+      child: _WApp(allReady: _allReady),
     );
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Splash Screen — shown only during Phase 1 (~0.5s)
+// Boot Splash — shown for ~0.5s only (Phase 1)
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _SplashScreen extends StatelessWidget {
+class _BootSplash extends StatelessWidget {
   final String status;
-  const _SplashScreen({required this.status});
+  const _BootSplash({required this.status});
 
   @override
   Widget build(BuildContext context) {
@@ -237,22 +222,23 @@ class _SplashScreen extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Container(
-              width: 90,
-              height: 90,
-              decoration: const BoxDecoration(
-                color: Colors.amber,
-                shape: BoxShape.circle,
-              ),
+              width: 88,
+              height: 88,
+              decoration: const BoxDecoration(color: Colors.amber, shape: BoxShape.circle),
               child: const Center(
-                child: Text('W', style: TextStyle(fontSize: 44, fontWeight: FontWeight.bold, color: Colors.white)),
+                child: Text('W',
+                    style: TextStyle(fontSize: 42, fontWeight: FontWeight.bold, color: Colors.white)),
               ),
             ),
             const SizedBox(height: 24),
-            const Text('ShaRogai', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            const Text('ShaRogai',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
             const SizedBox(height: 32),
-            const SizedBox(width: 32, height: 32, child: CircularProgressIndicator(color: Colors.amber, strokeWidth: 3)),
-            const SizedBox(height: 16),
-            Text(status, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+            const SizedBox(
+                width: 28, height: 28,
+                child: CircularProgressIndicator(color: Colors.amber, strokeWidth: 3)),
+            const SizedBox(height: 12),
+            Text(status, style: const TextStyle(color: Colors.grey, fontSize: 12)),
           ],
         ),
       ),
@@ -261,12 +247,12 @@ class _SplashScreen extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WAppContent — The actual MaterialApp with routing
+// _WApp — MaterialApp with routes + startup routing logic
 // ─────────────────────────────────────────────────────────────────────────────
 
-class WAppContent extends StatelessWidget {
-  final bool optionalServicesReady;
-  const WAppContent({Key? key, required this.optionalServicesReady}) : super(key: key);
+class _WApp extends StatelessWidget {
+  final bool allReady;
+  const _WApp({required this.allReady});
 
   @override
   Widget build(BuildContext context) {
@@ -277,12 +263,19 @@ class WAppContent extends StatelessWidget {
         useMaterial3: true,
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.amber),
       ),
-      home: const _WInitialRoute(),
+      home: const _StartRouter(),
       routes: {
         '/connect': (_) => const WConnectScreen(),
         '/register': (_) => WRegisterScreen(
               brainUrl: (ModalRoute.of(_)?.settings.arguments as Map?)?['brainUrl']
                   ?? 'http://192.168.0.183:8080',
+            ),
+        // Transition screen — shown after register, navigates to /main after 2.5s
+        '/transition': (_) => const WTransitionScreen(
+              destination: '/main',
+              title: 'Setting up your device',
+              subtitle: 'Loading all ShaRogai services...',
+              durationMs: 2500,
             ),
         '/main': (_) => const WMainScreen(),
         '/chat': (_) => const WChatScreen(),
@@ -293,17 +286,17 @@ class WAppContent extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _WInitialRoute — decides Connect vs Main on startup
+// _StartRouter — reads SharedPreferences and routes to /main or /connect
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _WInitialRoute extends StatefulWidget {
-  const _WInitialRoute({Key? key}) : super(key: key);
+class _StartRouter extends StatefulWidget {
+  const _StartRouter({Key? key}) : super(key: key);
 
   @override
-  State<_WInitialRoute> createState() => _WInitialRouteState();
+  State<_StartRouter> createState() => _StartRouterState();
 }
 
-class _WInitialRouteState extends State<_WInitialRoute> {
+class _StartRouterState extends State<_StartRouter> {
   @override
   void initState() {
     super.initState();
@@ -312,31 +305,26 @@ class _WInitialRouteState extends State<_WInitialRoute> {
 
   Future<void> _route() async {
     final prefs = await SharedPreferences.getInstance();
-    final brainUrl = prefs.getString('brain_url');
-    final deviceName = prefs.getString('device_name');
+    final brainUrl = prefs.getString('brain_url') ?? '';
+    final deviceName = prefs.getString('device_name') ?? '';
 
     if (!mounted) return;
 
-    if (brainUrl != null && brainUrl.isNotEmpty &&
-        deviceName != null && deviceName.isNotEmpty) {
-      // Already registered — go straight to main
-      print('[Router] Already registered as "$deviceName" → /main');
+    if (brainUrl.isNotEmpty && deviceName.isNotEmpty) {
+      print('[Router] Returning user "$deviceName" → /main');
       Navigator.of(context).pushReplacementNamed('/main');
     } else {
-      // First time — go to connect
-      print('[Router] Not registered → /connect');
+      print('[Router] New user → /connect');
       Navigator.of(context).pushReplacementNamed('/connect');
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Brief loading indicator while we read SharedPreferences
     return const Scaffold(
       backgroundColor: Colors.white,
       body: Center(
-        child: CircularProgressIndicator(color: Colors.amber, strokeWidth: 3),
-      ),
+          child: CircularProgressIndicator(color: Colors.amber, strokeWidth: 3)),
     );
   }
 }
