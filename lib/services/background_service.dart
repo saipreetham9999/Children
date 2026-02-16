@@ -83,12 +83,15 @@ class WBackgroundService {
     frameService = WFrameService();
     motionDetector = WMotionDetector();
 
+    // Try to initialize camera, but don't fail if it's not available
+    bool cameraReady = false;
     try {
       await frameService.initialize();
-      print('[ShaRogai] Camera initialized');
+      cameraReady = true;
+      print('[ShaRogai] ✅ Camera initialized');
     } catch (e) {
-      print('[ShaRogai] Camera error: $e');
-      return;
+      print('[ShaRogai] ⚠️  Camera init failed: $e');
+      print('[ShaRogai] ℹ️  Service will run without camera (heartbeat only)');
     }
 
     int heartbeatCount = 0;
@@ -101,50 +104,53 @@ class WBackgroundService {
       heartbeatCount++;
 
       try {
-        // Every 2 seconds: capture + motion detect (if enabled)
+        // Every 2 seconds: capture + motion detect (if enabled and camera ready)
         if (captureCount >= 2) {
           captureCount = 0;
 
-          // Check if motion detection is enabled
-          final motionEnabled = prefs.getBool('motion_enabled') ?? true;
-          if (!motionEnabled) {
-            print('[BG-Loop] ⏸️  Motion detection disabled, skipping capture');
-            return;
-          }
-
-          print('[BG-Loop] 📸 Capture cycle starting...');
-          try {
-            print('[BG-Loop] Capturing frame...');
-            final frameBytes = await frameService.captureFrame();
-            print('[BG-Loop] ✅ Frame captured: ${frameBytes.length} bytes');
-
-            print('[BG-Loop] Compressing frame...');
-            final compressed = frameService.compressFrame(frameBytes);
-            print('[BG-Loop] ✅ Compressed: ${compressed.length} bytes');
-
-            print('[BG-Loop] Detecting motion...');
-            final hasMotion = motionDetector.detectMotion(compressed);
-            print('[BG-Loop] Motion detected: $hasMotion');
-
-            if (hasMotion) {
-              frameCount++;
-              print('[BG-Loop] 🔥 MOTION FOUND! Sending frame to Brain...');
-              final motionContext = {
-                'source': 'motion_detection',
-                'motion': true,
-                'camera_position': 'front',
-                'timestamp': DateTime.now().toIso8601String(),
-                'frame_number': frameCount,
-                'motion_percentage': '20.0',
-              };
-              await brainService.sendFrame(compressed, context: motionContext);
-              print('[BG-Loop] ✅ Frame sent to Brain');
+          if (!cameraReady) {
+            print('[BG-Loop] ⏸️  Camera not available, skipping capture');
+          } else {
+            // Check if motion detection is enabled
+            final motionEnabled = prefs.getBool('motion_enabled') ?? true;
+            if (!motionEnabled) {
+              print('[BG-Loop] ⏸️  Motion detection disabled, skipping capture');
             } else {
-              print('[BG-Loop] No motion, frame discarded');
+              print('[BG-Loop] 📸 Capture cycle starting...');
+              try {
+                print('[BG-Loop] Capturing frame...');
+                final frameBytes = await frameService.captureFrame();
+                print('[BG-Loop] ✅ Frame captured: ${frameBytes.length} bytes');
+
+                print('[BG-Loop] Compressing frame...');
+                final compressed = frameService.compressFrame(frameBytes);
+                print('[BG-Loop] ✅ Compressed: ${compressed.length} bytes');
+
+                print('[BG-Loop] Detecting motion...');
+                final hasMotion = motionDetector.detectMotion(compressed);
+                print('[BG-Loop] Motion detected: $hasMotion');
+
+                if (hasMotion) {
+                  frameCount++;
+                  print('[BG-Loop] 🔥 MOTION FOUND! Sending frame to Brain...');
+                  final motionContext = {
+                    'source': 'motion_detection',
+                    'motion': true,
+                    'camera_position': 'front',
+                    'timestamp': DateTime.now().toIso8601String(),
+                    'frame_number': frameCount,
+                    'motion_percentage': '20.0',
+                  };
+                  await brainService.sendFrame(compressed, context: motionContext);
+                  print('[BG-Loop] ✅ Frame sent to Brain');
+                } else {
+                  print('[BG-Loop] No motion, frame discarded');
+                }
+              } catch (e) {
+                print('[BG-Loop] ❌ Frame error: $e');
+                print('[BG-Loop] Error type: ${e.runtimeType}');
+              }
             }
-          } catch (e) {
-            print('[BG-Loop] ❌ Frame error: $e');
-            print('[BG-Loop] Error type: ${e.runtimeType}');
           }
         }
 
@@ -194,7 +200,9 @@ class WBackgroundService {
     if (service is AndroidServiceInstance) {
       service.on('stop').listen((_) {
         bgTimer?.cancel();
-        frameService.dispose();
+        if (cameraReady) {
+          frameService.dispose();
+        }
         service.stopSelf();
       });
     }
