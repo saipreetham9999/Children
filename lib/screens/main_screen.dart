@@ -10,6 +10,8 @@ import '../services/brain_service.dart';
 import '../services/background_service.dart';
 import '../services/voice_service.dart';
 import '../services/chat_service.dart';
+import '../services/media_playback_controller.dart';
+import '../services/speaker_controller.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/alert_card.dart';
 
@@ -67,22 +69,51 @@ class _WMainScreenState extends State<WMainScreen> {
         });
       }
 
-      await _checkStatus();
+      // 1. Initial Handshake via /api/status
+      await _checkBrainStatus();
+
+      // 2. Start Background Service (Internal heartbeat will follow)
       await WBackgroundService.start();
 
+      // 3. Start Periodic Sync (Dashboard specific heartbeat + events)
       _syncTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-        _checkStatus();
+        _performPeriodicSync();
       });
     } catch (e) {
       debugPrint('[WMain] Init error: $e');
     }
   }
 
-  Future<void> _checkStatus() async {
+  /// Check Brain Connectivity using /api/status
+  Future<void> _checkBrainStatus() async {
     if (_brainService == null || !mounted) return;
     try {
+      print('[WMain] Checking Brain Connectivity (/api/status)...');
       await _brainService!.getStatus();
+      if (mounted) {
+        setState(() {
+          _isOnline = true;
+          _lastSync = DateTime.now();
+        });
+      }
+    } catch (e) {
+      print('[WMain] Brain Handshake failed: $e');
+      if (mounted) setState(() => _isOnline = false);
+    }
+  }
+
+  /// Periodic Sync: Heartbeat -> Events. Fallback to Status on error.
+  Future<void> _performPeriodicSync() async {
+    if (_brainService == null || !mounted) return;
+
+    try {
+      // Primary periodic communication: Heartbeat
+      print('[WMain] Sending Heartbeat...');
+      await _brainService!.sendHeartbeat();
+      
+      // Secondary: Poll for new events
       final events = await _brainService!.getEvents();
+
       if (mounted) {
         setState(() {
           _isOnline = true;
@@ -94,25 +125,49 @@ class _WMainScreenState extends State<WMainScreen> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _isOnline = false);
+      print('[WMain] Heartbeat failed, reverting to status check: $e');
+      // If heartbeat fails, re-verify full connectivity with status
+      await _checkBrainStatus();
     }
+  }
+
+  void _showConfirmation(String feature, bool status) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Icon(status ? Icons.check_circle : Icons.pause_circle, color: Colors.white),
+            const SizedBox(width: 12),
+            Text('$feature ${status ? 'Activated ✓' : 'Deactivated ⏸'}'),
+          ],
+        ),
+        backgroundColor: status ? Colors.green : Colors.grey[800],
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
   }
 
   Future<void> _toggleMotion(bool value) async {
     setState(() => _motionEnabled = value);
     await _prefs.setBool('motion_enabled', value);
     FlutterBackgroundService().invoke('toggle_camera', {'enable': value});
+    _showConfirmation('Motion Monitoring', value);
   }
 
   Future<void> _toggleVoice(bool value) async {
     setState(() => _voiceEnabled = value);
     await _prefs.setBool('voice_enabled', value);
-    // Future: Toggle background voice listener
+    _showConfirmation('Voice Detection', value);
   }
 
   Future<void> _toggleRecording(bool value) async {
     setState(() => _recordingEnabled = value);
     await _prefs.setBool('recording_enabled', value);
+    _showConfirmation('Local Recording', value);
   }
 
   Future<void> _takePhoto() async {
@@ -129,8 +184,9 @@ class _WMainScreenState extends State<WMainScreen> {
       });
       if (mounted) {
         setState(() {
-          _alerts.insert(0, WAlertModel(type: 'manual_photo', message: 'Test photo sent', severity: 'low'));
+          _alerts.insert(0, WAlertModel(type: 'manual_photo', message: 'Manual photo sent successfully', severity: 'low'));
         });
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Test photo sent to Brain')));
       }
       await frameService.dispose();
     } catch (e) {
@@ -173,6 +229,8 @@ class _WMainScreenState extends State<WMainScreen> {
           children: [
             _buildStatusCard(),
             const SizedBox(height: 24),
+            _buildMediaController(),
+            const SizedBox(height: 24),
             _buildFeatureToggles(),
             const SizedBox(height: 24),
             _buildActionButtons(),
@@ -202,6 +260,50 @@ class _WMainScreenState extends State<WMainScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildMediaController() {
+    return Consumer2<WMediaPlaybackController, WSpeakerController>(
+      builder: (context, media, speaker, child) {
+        return Card(
+          elevation: 2,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.music_note, color: Colors.amber),
+                    SizedBox(width: 8),
+                    Text('Media Controller', style: TextStyle(fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    IconButton(icon: const Icon(Icons.skip_previous), onPressed: () => media.stop()),
+                    IconButton(
+                      icon: Icon(media.isPlaying ? Icons.pause_circle : Icons.play_circle, size: 48, color: Colors.amber),
+                      onPressed: () => media.isPlaying ? media.pause() : media.resume(),
+                    ),
+                    IconButton(icon: const Icon(Icons.skip_next), onPressed: () => media.stop()),
+                  ],
+                ),
+                Slider(
+                  value: speaker.currentVolume.toDouble(),
+                  min: 0,
+                  max: 100,
+                  activeColor: Colors.amber,
+                  onChanged: (v) => speaker.setVolume(v.toInt()),
+                ),
+                Text('Volume: ${speaker.volumePercent}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -238,7 +340,7 @@ class _WMainScreenState extends State<WMainScreen> {
           child: ElevatedButton.icon(
             onPressed: _isCapturing ? null : _takePhoto,
             icon: const Icon(Icons.camera_alt),
-            label: _isCapturing ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('Test Photo'),
+            label: _isCapturing ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Test Photo'),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
           ),
         ),

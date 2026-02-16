@@ -19,7 +19,7 @@ class WRegisterScreen extends StatefulWidget {
 
 class _WRegisterScreenState extends State<WRegisterScreen> {
   final _nameController = TextEditingController();
-  late WDeviceModel _deviceModel;
+  WDeviceModel? _deviceModel;
   bool _isRegistering = false;
   String? _errorMessage;
 
@@ -51,31 +51,32 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
         defaultName = deviceModel;
       }
 
-      _deviceModel = WDeviceModel(
-        deviceName: defaultName,
-        deviceType: deviceType,
-        osVersion: osVersion,
-        deviceModel: deviceModel,
-        capabilities: ['camera', 'screen', 'audio'],
-      );
-
-      if (mounted) {
-        setState(() {
-          _nameController.text = _deviceModel.deviceName;
-        });
-      }
+      setState(() {
+        _deviceModel = WDeviceModel(
+          deviceName: defaultName,
+          deviceType: deviceType,
+          osVersion: osVersion,
+          deviceModel: deviceModel,
+          capabilities: ['camera', 'screen', 'audio'],
+        );
+        _nameController.text = defaultName;
+      });
     } catch (e) {
       print('[WRegister] Device detect error: $e');
-      _deviceModel = WDeviceModel(
-        deviceName: 'Worker',
-        deviceType: 'unknown',
-        osVersion: 'unknown',
-        deviceModel: 'unknown',
-      );
+      setState(() {
+        _deviceModel = WDeviceModel(
+          deviceName: 'Worker',
+          deviceType: 'unknown',
+          osVersion: 'unknown',
+          deviceModel: 'unknown',
+        );
+      });
     }
   }
 
   Future<void> _registerDevice() async {
+    if (_deviceModel == null) return;
+
     setState(() {
       _isRegistering = true;
       _errorMessage = null;
@@ -84,10 +85,10 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
     try {
       final updatedDevice = WDeviceModel(
         deviceName: _nameController.text.trim(),
-        deviceType: _deviceModel.deviceType,
-        osVersion: _deviceModel.osVersion,
-        deviceModel: _deviceModel.deviceModel,
-        capabilities: _deviceModel.capabilities,
+        deviceType: _deviceModel!.deviceType,
+        osVersion: _deviceModel!.osVersion,
+        deviceModel: _deviceModel!.deviceModel,
+        capabilities: _deviceModel!.capabilities,
       );
 
       final brainService = WBrainService(
@@ -116,6 +117,12 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_deviceModel == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Worker — Register'),
@@ -147,15 +154,15 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
             ),
             const SizedBox(height: 24),
             // Device Info (read-only)
-            _buildInfoCard('Device Type', _deviceModel.deviceType),
+            _buildInfoCard('Device Type', _deviceModel!.deviceType),
             const SizedBox(height: 16),
-            _buildInfoCard('Device Model', _deviceModel.deviceModel),
+            _buildInfoCard('Device Model', _deviceModel!.deviceModel),
             const SizedBox(height: 16),
-            _buildInfoCard('OS Version', _deviceModel.osVersion),
+            _buildInfoCard('OS Version', _deviceModel!.osVersion),
             const SizedBox(height: 16),
             _buildInfoCard(
               'Capabilities',
-              _deviceModel.capabilities.join(', '),
+              _deviceModel!.capabilities.join(', '),
             ),
             const SizedBox(height: 48),
             // Register Button
