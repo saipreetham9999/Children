@@ -212,14 +212,34 @@ class _WMainScreenState extends State<WMainScreen> {
             onPressed: () => Navigator.pushNamed(context, '/chat'),
           ),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Row(
               children: [
                 WStatusIndicator(isOnline: _isOnline),
-                const SizedBox(width: 8),
+                const SizedBox(width: 4),
                 Text(_isOnline ? 'Online' : 'Offline', style: const TextStyle(fontSize: 12)),
               ],
             ),
+          ),
+          PopupMenuButton<String>(
+            onSelected: (value) async {
+              if (value == 'reconnect') {
+                final prefs = await SharedPreferences.getInstance();
+                await prefs.remove('device_name');
+                await prefs.remove('brain_url');
+                if (mounted) Navigator.of(context).pushReplacementNamed('/connect');
+              }
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(
+                value: 'reconnect',
+                child: Row(children: [
+                  Icon(Icons.logout, size: 18),
+                  SizedBox(width: 8),
+                  Text('Re-register / Change Brain'),
+                ]),
+              ),
+            ],
           ),
         ],
       ),
@@ -264,46 +284,79 @@ class _WMainScreenState extends State<WMainScreen> {
   }
 
   Widget _buildMediaController() {
-    return Consumer2<WMediaPlaybackController, WSpeakerController>(
-      builder: (context, media, speaker, child) {
-        return Card(
-          elevation: 2,
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
+    // Use try-based provider lookup — services load in background (Phase 2)
+    // and may not be in the provider tree yet when main screen first renders.
+    WMediaPlaybackController? media;
+    WSpeakerController? speaker;
+    try {
+      media = Provider.of<WMediaPlaybackController>(context, listen: true);
+    } catch (_) {}
+    try {
+      speaker = Provider.of<WSpeakerController>(context, listen: true);
+    } catch (_) {}
+
+    final bool servicesReady = media != null && speaker != null;
+
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          children: [
+            Row(
               children: [
-                const Row(
-                  children: [
-                    Icon(Icons.music_note, color: Colors.amber),
-                    SizedBox(width: 8),
-                    Text('Media Controller', style: TextStyle(fontWeight: FontWeight.bold)),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    IconButton(icon: const Icon(Icons.skip_previous), onPressed: () => media.stop()),
-                    IconButton(
-                      icon: Icon(media.isPlaying ? Icons.pause_circle : Icons.play_circle, size: 48, color: Colors.amber),
-                      onPressed: () => media.isPlaying ? media.pause() : media.resume(),
-                    ),
-                    IconButton(icon: const Icon(Icons.skip_next), onPressed: () => media.stop()),
-                  ],
-                ),
-                Slider(
-                  value: speaker.currentVolume.toDouble(),
-                  min: 0,
-                  max: 100,
-                  activeColor: Colors.amber,
-                  onChanged: (v) => speaker.setVolume(v.toInt()),
-                ),
-                Text('Volume: ${speaker.volumePercent}', style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                const Icon(Icons.music_note, color: Colors.amber),
+                const SizedBox(width: 8),
+                const Text('Media Controller', style: TextStyle(fontWeight: FontWeight.bold)),
+                if (!servicesReady) ...[
+                  const Spacer(),
+                  const SizedBox(
+                    width: 14, height: 14,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.amber),
+                  ),
+                  const SizedBox(width: 8),
+                  const Text('Loading...', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                ],
               ],
             ),
-          ),
-        );
-      },
+            const SizedBox(height: 16),
+            if (servicesReady) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  IconButton(icon: const Icon(Icons.skip_previous), onPressed: () => media!.stop()),
+                  IconButton(
+                    icon: Icon(
+                      media!.isPlaying ? Icons.pause_circle : Icons.play_circle,
+                      size: 48, color: Colors.amber,
+                    ),
+                    onPressed: () => media!.isPlaying ? media.pause() : media.resume(),
+                  ),
+                  IconButton(icon: const Icon(Icons.skip_next), onPressed: () => media!.stop()),
+                ],
+              ),
+              Slider(
+                value: speaker!.currentVolume.toDouble(),
+                min: 0,
+                max: 100,
+                activeColor: Colors.amber,
+                onChanged: (v) => speaker!.setVolume(v.toInt()),
+              ),
+              Text('Volume: ${speaker.volumePercent}',
+                  style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            ] else ...[
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'Media & volume controls loading in background...',
+                  style: TextStyle(color: Colors.grey, fontSize: 13),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 

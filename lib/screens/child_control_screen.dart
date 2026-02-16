@@ -8,8 +8,41 @@ import '../services/device_policy_service.dart';
 class WChildControlScreen extends StatelessWidget {
   const WChildControlScreen({Key? key}) : super(key: key);
 
+  /// Safely look up a provider — returns null if not registered yet
+  static T? _tryRead<T>(BuildContext context) {
+    try {
+      return Provider.of<T>(context, listen: false);
+    } catch (_) {
+      return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Check if optional services are ready
+    final childMonitor = _tryRead<WChildOSMonitor>(context);
+    final childControl = _tryRead<WiOSChildControl>(context);
+    final policyService = _tryRead<WDevicePolicyService>(context);
+
+    if (childMonitor == null || childControl == null || policyService == null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Child Controls')),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(color: Colors.amber),
+              SizedBox(height: 16),
+              Text('Services loading in background...'),
+              SizedBox(height: 8),
+              Text('This takes a few seconds on first launch.',
+                  style: TextStyle(color: Colors.grey, fontSize: 12)),
+            ],
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Child Controls'),

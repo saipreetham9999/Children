@@ -19,15 +19,24 @@ class _WConnectScreenState extends State<WConnectScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSavedIP();
+    _checkAndLoad();
   }
 
-  Future<void> _loadSavedIP() async {
+  Future<void> _checkAndLoad() async {
     final prefs = await SharedPreferences.getInstance();
     final savedIP = prefs.getString('brain_url') ?? '';
-    if (mounted) {
-      _ipController.text = savedIP;
+    final deviceName = prefs.getString('device_name') ?? '';
+
+    if (!mounted) return;
+
+    // If already registered, skip straight to main
+    if (savedIP.isNotEmpty && deviceName.isNotEmpty) {
+      print('[ConnectScreen] Already registered as "$deviceName", navigating to /main');
+      Navigator.of(context).pushReplacementNamed('/main');
+      return;
     }
+
+    _ipController.text = savedIP;
   }
 
   Future<void> _checkBrainStatus() async {
@@ -172,6 +181,20 @@ class _WConnectScreenState extends State<WConnectScreen> {
                 ),
               ),
               const SizedBox(height: 16),
+              // If connection fails, offer shortcut to go directly to main
+              if (_errorMessage != null)
+                TextButton(
+                  onPressed: () async {
+                    final prefs = await SharedPreferences.getInstance();
+                    final savedUrl = _ipController.text.trim();
+                    if (savedUrl.isNotEmpty) {
+                      await prefs.setString('brain_url', savedUrl.startsWith('http') ? savedUrl : 'http://$savedUrl:8080');
+                    }
+                    if (mounted) Navigator.of(context).pushReplacementNamed('/register',
+                        arguments: {'brainUrl': prefs.getString('brain_url') ?? savedUrl});
+                  },
+                  child: const Text('Brain offline? Register anyway →', style: TextStyle(color: Colors.deepPurple)),
+                ),
               // Status messages
               if (_statusMessage != null)
                 Container(
