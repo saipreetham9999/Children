@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/device_model.dart';
 import '../services/brain_service.dart';
-import '../services/child_os_monitor.dart';
 
-/// WRegisterScreen — Phase MVP: Register device with Brain
 class WRegisterScreen extends StatefulWidget {
   final String brainUrl;
 
@@ -98,7 +95,8 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
         deviceName: updatedDevice.deviceName,
       );
 
-      final response = await brainService.connect(updatedDevice);
+      // Perform /api/connect
+      await brainService.connect(updatedDevice);
 
       // Save to device
       final prefs = await SharedPreferences.getInstance();
@@ -106,20 +104,9 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
       await prefs.setString('device_type', updatedDevice.deviceType);
       await prefs.setString('brain_url', widget.brainUrl);
 
-      // Initialize child monitor with device name (if service is ready)
       if (mounted) {
-        try {
-          final monitor = Provider.of<WChildOSMonitor>(context, listen: false);
-          await monitor.initialize(updatedDevice.deviceName);
-        } catch (_) {
-          // Service may still be loading (Phase 2) — it will self-init later
-        }
-      }
-
-      if (mounted) {
-        // Go to transition screen — it shows progress for 2.5s then navigates to /main
-        // This gives Phase 2 services time to finish loading
-        Navigator.of(context).pushReplacementNamed('/transition');
+        // Navigate directly to main, skipping transition if it was causing issues
+        Navigator.of(context).pushReplacementNamed('/main');
       }
     } catch (e) {
       setState(() {
@@ -133,132 +120,63 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
   Widget build(BuildContext context) {
     if (_deviceModel == null) {
       return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+        body: Center(child: CircularProgressIndicator(color: Colors.amber)),
       );
     }
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Worker — Register'),
-        centerTitle: true,
-        backgroundColor: Colors.deepPurple,
+        title: const Text('Register Node'),
+        backgroundColor: Colors.amber,
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const Icon(Icons.security, size: 64, color: Colors.amber),
             const SizedBox(height: 24),
-            Text(
-              'Device Registration',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 24),
-            // Device Name
             TextField(
               controller: _nameController,
-              decoration: InputDecoration(
-                labelText: 'Device Name',
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                prefixIcon: const Icon(Icons.phone_android),
+              decoration: const InputDecoration(
+                labelText: 'Enter Device ID',
+                border: OutlineInputBorder(),
               ),
-              enabled: !_isRegistering,
             ),
             const SizedBox(height: 24),
-            // Device Info (read-only)
-            _buildInfoCard('Device Type', _deviceModel!.deviceType),
-            const SizedBox(height: 16),
-            _buildInfoCard('Device Model', _deviceModel!.deviceModel),
-            const SizedBox(height: 16),
-            _buildInfoCard('OS Version', _deviceModel!.osVersion),
-            const SizedBox(height: 16),
-            _buildInfoCard(
-              'Capabilities',
-              _deviceModel!.capabilities.join(', '),
-            ),
+            _infoCard('Device Type', _deviceModel!.deviceType),
+            _infoCard('Device Model', _deviceModel!.deviceModel),
+            _infoCard('OS Version', _deviceModel!.osVersion),
             const SizedBox(height: 48),
-            // Register Button
             SizedBox(
               width: double.infinity,
-              height: 48,
+              height: 50,
               child: ElevatedButton(
                 onPressed: _isRegistering ? null : _registerDevice,
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.deepPurple,
-                ),
-                child: _isRegistering
-                    ? const SizedBox(
-                        height: 24,
-                        width: 24,
-                        child: CircularProgressIndicator(
-                          valueColor: AlwaysStoppedAnimation<Color>(
-                            Colors.white,
-                          ),
-                        ),
-                      )
-                    : const Text(
-                        'Register with Brain',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.amber, foregroundColor: Colors.black),
+                child: _isRegistering 
+                  ? const CircularProgressIndicator(color: Colors.black) 
+                  : const Text('REGISTER & START'),
               ),
             ),
-            if (_errorMessage != null) ...[
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.1),
-                  border: Border.all(color: Colors.red),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.error, color: Colors.red),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        _errorMessage!,
-                        style: const TextStyle(color: Colors.red),
-                      ),
-                    ),
-                  ],
-                ),
+            if (_errorMessage != null) 
+              Padding(
+                padding: const EdgeInsets.only(top: 16),
+                child: Text(_errorMessage!, style: const TextStyle(color: Colors.red)),
               ),
-            ],
           ],
         ),
       ),
     );
   }
 
-  Widget _buildInfoCard(String label, String value) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey[300]!),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _infoCard(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: Theme.of(context).textTheme.bodySmall!.copyWith(
-                  color: Colors.grey[600],
-                  fontWeight: FontWeight.bold,
-                ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
+          Text(label, style: const TextStyle(color: Colors.grey)),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
         ],
       ),
     );
