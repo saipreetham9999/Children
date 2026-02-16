@@ -9,6 +9,7 @@ import 'motion_detector.dart';
 
 /// WBackgroundService — Continuous monitoring for ShaRogai
 /// Runs in background: heartbeat + frame capture + motion detection
+@pragma('vm:entry-point')
 class WBackgroundService {
   static const String serviceName = 'ShaRogai';
   static late SharedPreferences prefs;
@@ -172,22 +173,15 @@ class WBackgroundService {
             print('[BG-Loop] ❌ Events error: $e');
           }
 
-          // Update notification (Android notification update - safe method)
-          if (service is AndroidServiceInstance) {
-            try {
-              final stats = motionDetector.getStats();
-              final framesCount = stats['motion_detections'] ?? 0;
-              final totalFrames = stats['frames_processed'] ?? 0;
-              final rate = stats['detection_rate'] ?? '0.0';
-
-              service.setForegroundNotificationInfo(
-                title: 'ShaRogai',
-                content: '🟢 Online • Frames: $framesCount/$totalFrames ($rate%)',
-              );
-              print('[BG-Loop] ✅ Notification updated');
-            } catch (e) {
-              print('[BG-Loop] ❌ Notification error: $e');
-            }
+          // Log stats (notification already set during service init)
+          try {
+            final stats = motionDetector.getStats();
+            final framesCount = stats['motion_detections'] ?? 0;
+            final totalFrames = stats['frames_processed'] ?? 0;
+            final rate = stats['detection_rate'] ?? '0.0';
+            print('[BG-Loop] 📊 Stats - Motion: $framesCount/$totalFrames ($rate%)');
+          } catch (e) {
+            print('[BG-Loop] ❌ Stats error: $e');
           }
         }
       } catch (e) {
