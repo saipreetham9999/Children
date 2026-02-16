@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/device_model.dart';
 import '../services/brain_service.dart';
+import '../services/child_os_monitor.dart';
 
 /// WRegisterScreen — Phase MVP: Register device with Brain
 class WRegisterScreen extends StatefulWidget {
@@ -103,6 +105,16 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
       await prefs.setString('device_name', updatedDevice.deviceName);
       await prefs.setString('device_type', updatedDevice.deviceType);
       await prefs.setString('brain_url', widget.brainUrl);
+
+      // Initialize child monitor with device name (if service is ready)
+      if (mounted) {
+        try {
+          final monitor = Provider.of<WChildOSMonitor>(context, listen: false);
+          await monitor.initialize(updatedDevice.deviceName);
+        } catch (_) {
+          // Service may still be loading (Phase 2) — it will self-init later
+        }
+      }
 
       if (mounted) {
         Navigator.of(context).pushReplacementNamed('/main');
