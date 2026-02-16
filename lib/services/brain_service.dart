@@ -15,68 +15,45 @@ class WBrainService {
     this.heartbeatIntervalSeconds = 5,
   });
 
-  /// POST /api/connect — Register device with Brain
+  /// GET /api/status — Get Brain status
+  Future<Map<String, dynamic>> getStatus() async {
+    try {
+      final response = await http.get(Uri.parse('$brainUrl/api/status')).timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      throw Exception('Status failed: ${response.statusCode}');
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  /// POST /api/connect — Register device
   Future<Map<String, dynamic>> connect(WDeviceModel device) async {
     try {
-      print('[WBrain] Connecting to $brainUrl/api/connect');
       final response = await http.post(
         Uri.parse('$brainUrl/api/connect'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(device.toJson()),
       ).timeout(const Duration(seconds: 10));
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        print('[WBrain] Connected: ${data['status']}');
-        return data;
-      } else {
-        print('[WBrain] Connect failed: ${response.statusCode}');
-        throw Exception('Connect failed: ${response.statusCode}');
-      }
+      if (response.statusCode == 200) return jsonDecode(response.body);
+      throw Exception('Connect failed: ${response.statusCode}');
     } catch (e) {
-      print('[WBrain] Connect error: $e');
       rethrow;
     }
   }
 
-  /// GET /api/status — Get Brain status and connected children
-  Future<Map<String, dynamic>> getStatus() async {
-    try {
-      final response = await http.get(
-        Uri.parse('$brainUrl/api/status'),
-      ).timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200) {
-        return jsonDecode(response.body);
-      } else {
-        throw Exception('Status failed: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('[WBrain] Status error: $e');
-      rethrow;
-    }
-  }
-
-  /// POST /api/heartbeat — Send heartbeat to stay alive
+  /// POST /api/heartbeat — Send heartbeat
   Future<void> sendHeartbeat() async {
     try {
-      final response = await http.post(
+      await http.post(
         Uri.parse('$brainUrl/api/heartbeat'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'device_name': deviceName}),
       ).timeout(const Duration(seconds: 5));
-
-      if (response.statusCode == 200) {
-        print('[WBrain] Heartbeat OK');
-      } else {
-        print('[WBrain] Heartbeat failed: ${response.statusCode}');
-      }
-    } catch (e) {
-      print('[WBrain] Heartbeat error: $e');
-    }
+    } catch (_) {}
   }
 
-  /// GET /api/events — Poll for pending alerts/messages
+  /// GET /api/events — Poll for commands (e.g., 'capture_extra')
   Future<List<WAlertModel>> getEvents() async {
     try {
       final response = await http.get(
@@ -85,97 +62,34 @@ class WBrainService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        final events = (data['events'] as List?)
+        return (data['events'] as List?)
                 ?.map((e) => WAlertModel.fromJson(e as Map<String, dynamic>))
-                .toList() ??
-            [];
-        print('[WBrain] Got ${events.length} events');
-        return events;
-      } else {
-        return [];
+                .toList() ?? [];
       }
-    } catch (e) {
-      print('[WBrain] Events error: $e');
+      return [];
+    } catch (_) {
       return [];
     }
   }
 
-  /// POST /api/report — Send frame to Brain for AI processing
-  Future<void> sendFrame(
-    List<int> frameBytes, {
-    String frameType = 'jpeg',
-    Map<String, dynamic>? context,
-  }) async {
+  /// POST /api/report — Send frame
+  Future<void> sendFrame(List<int> frameBytes, {Map<String, dynamic>? context}) async {
     try {
-      print('[SendFrame] Starting... frame size: ${frameBytes.length} bytes');
-
-      if (frameBytes.isEmpty) {
-        print('[SendFrame] ERROR: Frame bytes empty!');
-        return;
-      }
-
-      // Base64 encode
-      print('[SendFrame] Encoding to base64...');
-      final base64Frame = base64Encode(frameBytes);
-      print('[SendFrame] Base64 encoded size: ${base64Frame.length} characters');
-
-      // Build URL
-      final url = '$brainUrl/api/report';
-      print('[SendFrame] URL: $url');
-      print('[SendFrame] Device: $deviceName');
-
-      // Build payload with context
-      final payload = {
-        'device_name': deviceName,
-        'type': 'frame',
-        'frame_type': frameType,
-        'data': base64Frame,
-        'timestamp': DateTime.now().toIso8601String(),
-        'context': context ?? {
-          'source': 'manual',
-          'motion': false,
-          'camera_position': 'front',
-        }
-      };
-
-      print('[SendFrame] Payload keys: ${payload.keys}');
-      print('[SendFrame] Context: ${payload['context']}');
-      print('[SendFrame] Sending POST request...');
-
       final response = await http.post(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(payload),
-      ).timeout(const Duration(seconds: 15));
-
-      print('[SendFrame] Response status: ${response.statusCode}');
-      print('[SendFrame] Response body: ${response.body}');
-
-      if (response.statusCode == 200) {
-        print('[SendFrame] ✅ SUCCESS: Frame sent (${frameBytes.length} bytes)');
-      } else {
-        print('[SendFrame] ❌ FAILED: ${response.statusCode}');
-        print('[SendFrame] Response: ${response.body}');
-      }
-    } catch (e) {
-      print('[SendFrame] ❌ ERROR: $e');
-      print('[SendFrame] ERROR Type: ${e.runtimeType}');
-    }
-  }
-
-  /// POST /api/disconnect — Cleanly disconnect from Brain
-  Future<void> disconnect() async {
-    try {
-      await http.post(
-        Uri.parse('$brainUrl/api/disconnect'),
+        Uri.parse('$brainUrl/api/report'),
         headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'device_name': deviceName}),
-      ).timeout(const Duration(seconds: 5));
-      print('[WBrain] Disconnected');
+        body: jsonEncode({
+          'device_name': deviceName,
+          'type': 'frame',
+          'data': base64Encode(frameBytes),
+          'context': context ?? {'source': 'background'},
+          'timestamp': DateTime.now().toIso8601String(),
+        }),
+      ).timeout(const Duration(seconds: 15));
+      
+      print('[Brain] Frame report status: ${response.statusCode}');
     } catch (e) {
-      print('[WBrain] Disconnect error: $e');
+      print('[Brain] Frame report error: $e');
     }
   }
 }
