@@ -13,11 +13,11 @@ import 'services/background_service.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Request permissions FIRST (before background service)
+  await _requestPermissions();
+
   // Initialize background service (Phase 2.3)
   await WBackgroundService.initialize();
-
-  // Request permissions
-  await _requestPermissions();
 
   runApp(const WApp());
 }
