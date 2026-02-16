@@ -28,6 +28,11 @@ class _WMainScreenState extends State<WMainScreen> {
   bool _isCapturing = false;
   String? _statsText;
 
+  // Feature toggles
+  bool _motionDetectionEnabled = true;
+  bool _voiceDetectionEnabled = false;
+  bool _recordingEnabled = false;
+
   Timer? _syncTimer;
 
   @override
@@ -47,6 +52,13 @@ class _WMainScreenState extends State<WMainScreen> {
         deviceName: deviceName,
       );
 
+      // Load feature preferences
+      setState(() {
+        _motionDetectionEnabled = _prefs.getBool('motion_enabled') ?? true;
+        _voiceDetectionEnabled = _prefs.getBool('voice_enabled') ?? false;
+        _recordingEnabled = _prefs.getBool('recording_enabled') ?? false;
+      });
+
       // Check status
       await _checkStatus();
 
@@ -56,6 +68,57 @@ class _WMainScreenState extends State<WMainScreen> {
       });
     } catch (e) {
       print('[WMain] Init error: $e');
+    }
+  }
+
+  /// Toggle motion detection feature
+  Future<void> _toggleMotionDetection(bool value) async {
+    setState(() => _motionDetectionEnabled = value);
+    await _prefs.setBool('motion_enabled', value);
+    print('[Dashboard] Motion detection ${value ? 'enabled' : 'disabled'}');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            value ? '📹 Motion detection enabled' : '⏸️ Motion detection disabled',
+          ),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
+  }
+
+  /// Toggle voice detection feature
+  Future<void> _toggleVoiceDetection(bool value) async {
+    setState(() => _voiceDetectionEnabled = value);
+    await _prefs.setBool('voice_enabled', value);
+    print('[Dashboard] Voice detection ${value ? 'enabled' : 'disabled'}');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            value ? '🎤 Voice detection enabled' : '⏸️ Voice detection disabled',
+          ),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
+  }
+
+  /// Toggle recording feature
+  Future<void> _toggleRecording(bool value) async {
+    setState(() => _recordingEnabled = value);
+    await _prefs.setBool('recording_enabled', value);
+    print('[Dashboard] Recording ${value ? 'enabled' : 'disabled'}');
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            value ? '⏺️ Recording enabled' : '⏹️ Recording disabled',
+          ),
+          duration: const Duration(seconds: 1),
+        ),
+      );
     }
   }
 
@@ -157,6 +220,40 @@ class _WMainScreenState extends State<WMainScreen> {
     }
   }
 
+  /// Build feature card with toggle
+  Widget _buildFeatureCard({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required bool enabled,
+    required Function(bool) onToggle,
+    required Color color,
+  }) {
+    return Card(
+      elevation: 2,
+      child: ListTile(
+        leading: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.2),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, color: color),
+        ),
+        title: Text(
+          title,
+          style: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+        subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+        trailing: Switch(
+          value: enabled,
+          onChanged: onToggle,
+          activeColor: color,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -235,6 +332,45 @@ class _WMainScreenState extends State<WMainScreen> {
                   ),
                 ],
               ),
+            ),
+            const SizedBox(height: 24),
+            // Feature Cards Section
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Features',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+            ),
+            const SizedBox(height: 12),
+            // Motion Detection Card
+            _buildFeatureCard(
+              icon: Icons.motion_photos_on,
+              title: 'Motion Detection',
+              subtitle: 'Detect movement and send frames',
+              enabled: _motionDetectionEnabled,
+              onToggle: _toggleMotionDetection,
+              color: Colors.red,
+            ),
+            const SizedBox(height: 12),
+            // Voice Detection Card
+            _buildFeatureCard(
+              icon: Icons.mic,
+              title: 'Voice Detection',
+              subtitle: 'Listen for sound/commands',
+              enabled: _voiceDetectionEnabled,
+              onToggle: _toggleVoiceDetection,
+              color: Colors.purple,
+            ),
+            const SizedBox(height: 12),
+            // Recording Card
+            _buildFeatureCard(
+              icon: Icons.videocam,
+              title: 'Recording',
+              subtitle: 'Record audio/video on motion',
+              enabled: _recordingEnabled,
+              onToggle: _toggleRecording,
+              color: Colors.blue,
             ),
             const SizedBox(height: 24),
             // Phase 2.1: Take Photo Button
