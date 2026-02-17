@@ -30,8 +30,8 @@ class _WMainScreenState extends State<WMainScreen> {
   DateTime? _lastSync;
   bool _isCapturing = false;
   bool _isInitialized = false;
+  WMotionDetector? _motionDetector;
   final TextEditingController _textController = TextEditingController();
-
   // Feature toggles
   bool _motionEnabled = false;
   bool _voiceEnabled = false;
@@ -153,10 +153,23 @@ class _WMainScreenState extends State<WMainScreen> {
     );
   }
 
+
+
   Future<void> _toggleMotion(bool value) async {
     setState(() => _motionEnabled = value);
     await _prefs.setBool('motion_enabled', value);
-    FlutterBackgroundService().invoke('toggle_camera', {'enable': value});
+
+    if (value) {
+      _motionDetector ??= WMotionDetector(motionThreshold: 0.15);
+      // Start camera feed in your FrameService
+      FlutterBackgroundService().invoke('toggle_camera', {'enable': true});
+    } else {
+      // Optionally dispose detector when motion is OFF
+      _motionDetector?.dispose();
+      _motionDetector = null;
+      FlutterBackgroundService().invoke('toggle_camera', {'enable': false});
+    }
+
     _showConfirmation('Motion Monitoring', value);
   }
 
