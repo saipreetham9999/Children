@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -30,6 +33,11 @@ class _WMainScreenState extends State<WMainScreen> {
   DateTime? _lastSync;
   bool _isCapturing = false;
   bool _isInitialized = false;
+  WMotionDetector? _motionDetector;
+  WFrameService? _frameService;
+  Timer? _motionTimer;  // Track motion timer
+  WVoiceService? _voiceService;  // Track voice service
+  final TextEditingController _textController = TextEditingController();
 
   // Feature toggles
   bool _motionEnabled = false;
@@ -49,7 +57,7 @@ class _WMainScreenState extends State<WMainScreen> {
   Future<void> _initialize() async {
     try {
       _prefs = await SharedPreferences.getInstance();
-      
+
       final brainUrl = _prefs.getString('brain_url');
       final deviceName = _prefs.getString('device_name');
 
@@ -110,7 +118,7 @@ class _WMainScreenState extends State<WMainScreen> {
       // Primary periodic communication: Heartbeat
       print('[WMain] Sending Heartbeat...');
       await _brainService!.sendHeartbeat();
-      
+
       // Secondary: Poll for new events
       final events = await _brainService!.getEvents();
 
@@ -138,7 +146,8 @@ class _WMainScreenState extends State<WMainScreen> {
       SnackBar(
         content: Row(
           children: [
-            Icon(status ? Icons.check_circle : Icons.pause_circle, color: Colors.white),
+            Icon(status ? Icons.check_circle : Icons.pause_circle,
+                color: Colors.white),
             const SizedBox(width: 12),
             Text('$feature ${status ? 'Activated ✓' : 'Deactivated ⏸'}'),
           ],
@@ -151,25 +160,174 @@ class _WMainScreenState extends State<WMainScreen> {
     );
   }
 
+  /// Toggle Motion Detection
   Future<void> _toggleMotion(bool value) async {
     setState(() => _motionEnabled = value);
     await _prefs.setBool('motion_enabled', value);
-    FlutterBackgroundService().invoke('toggle_camera', {'enable': value});
-    _showConfirmation('Motion Monitoring', value);
+
+    if (value) {
+      try {
+        // Request camera permissions first
+        await Permission.camera.request();
+        await Permission.microphone.request();
+
+        // Initialize camera in MAIN thread
+        final frameService = WFrameService();
+        await frameService.initialize();
+
+        // Create motion detector
+        _motionDetector = WMotionDetector(motionThreshold: 0.15);
+        _frameService = frameService;
+
+        // Start continuous frame capture loop
+        _motionTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+          // CRITICAL: Check if motion is still enabled AND widget is mounted
+          if (!_motionEnabled || !mounted) {
+            timer.cancel();
+            return;
+          }
+
+          try {
+            final frameBytes = await frameService.captureFrame();
+            final hasMotion = await _motionDetector!.detectMotion(frameBytes);
+
+            if (hasMotion && _brainService != null) {
+              final compressed = frameService.compressFrame(frameBytes);
+              await _brainService!.sendReport(
+                type: 'frame',
+                data: base64Encode(compressed),
+                context: {
+                  'source': 'motion_detection',
+                  'timestamp': DateTime.now().toIso8601String(),
+                },
+              );
+              print('[Motion] ✅ Detected and sent frame');
+            }
+          } catch (e) {
+            print('[Motion] ❌ Frame capture error: $e');
+          }
+        });
+
+        _showConfirmation('Motion Monitoring', true);
+      } catch (e) {
+        print('[Motion] ❌ Init error: $e');
+        setState(() => _motionEnabled = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Motion detection failed: $e')),
+        );
+      }
+    } else {
+      // STOP motion detection - cancel timer first
+      _motionTimer?.cancel();
+      _motionTimer = null;
+
+      _motionDetector?.dispose();
+      _motionDetector = null;
+
+      // Dispose the frame service
+      if (_frameService != null) {
+        await _frameService!.dispose();
+        _frameService = null;
+      }
+
+      _showConfirmation('Motion Monitoring', false);
+    }
   }
 
+  /// Toggle Voice Detection (SINGLE METHOD - NO DUPLICATES)
   Future<void> _toggleVoice(bool value) async {
     setState(() => _voiceEnabled = value);
     await _prefs.setBool('voice_enabled', value);
-    _showConfirmation('Voice Detection', value);
+
+    if (value) {
+      try {
+        print('[Main] Voice Detection: ON');
+
+        // Create or initialize voice service
+        _voiceService = WVoiceService();
+        await _voiceService!.initialize();
+
+        // Set callback for when voice is detected
+        _voiceService!.onSpeechResult = (recognizedText, audioBytes) async {
+          print('[Main] 🎤 Voice detected: "$recognizedText"');
+
+          if (_brainService != null && recognizedText.isNotEmpty) {
+            try {
+              // Send text report to brain
+              await _brainService!.sendReport(
+                type: 'voice_text',
+                data: recognizedText,
+                context: {
+                  'source': 'voice_detection',
+                  'audio_bytes': recognizedText,
+                  'timestamp': DateTime.now().toIso8601String(),
+                },
+              );
+              print('[Main] ✅ Voice text sent to brain');
+              // Send audio bytes if available
+              if (audioBytes != null && audioBytes.isNotEmpty) {
+                await _brainService!.sendReport(
+                  type: 'audio',
+                  data: base64Encode(audioBytes),  // Encode to base64
+                  context: {
+                    'source': 'voice_detection',
+                    'timestamp': DateTime.now().toIso8601String(),
+                  },
+                );
+                print('[Main] ✅ Audio sent to brain (${audioBytes.length} bytes)');
+              } else {
+                print('[Main] ⚠️ No audio bytes captured');
+              }
+
+
+              // Update UI with detected voice
+              if (mounted) {
+                setState(() {
+                  _alerts.insert(0, WAlertModel(
+                    type: 'voice_detection',
+                    message: 'Voice: $recognizedText',
+                    severity: 'medium',
+                  ));
+                });
+              }
+            } catch (e) {
+              print('[Main] ❌ Voice send error: $e');
+            }
+          }
+        };
+
+        // Start continuous listening
+        await _voiceService!.startListening(
+          timeout: const Duration(minutes: 5),
+        );
+
+        _showConfirmation('Voice Detection', true);
+        print('[Main] Voice Detection: Listening started');
+      } catch (e) {
+        print('[Main] ❌ Voice init error: $e');
+        setState(() => _voiceEnabled = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Voice detection failed: $e')),
+        );
+      }
+    } else {
+      // Stop voice detection
+      print('[Main] Voice Detection: OFF');
+      await _voiceService?.stopListening();
+      _voiceService?.dispose();
+      _voiceService = null;
+      _showConfirmation('Voice Detection', false);
+    }
   }
 
+  /// Toggle Recording
   Future<void> _toggleRecording(bool value) async {
     setState(() => _recordingEnabled = value);
     await _prefs.setBool('recording_enabled', value);
     _showConfirmation('Local Recording', value);
   }
 
+  /// Take manual photo
   Future<void> _takePhoto() async {
     if (_brainService == null) return;
     setState(() => _isCapturing = true);
@@ -178,19 +336,35 @@ class _WMainScreenState extends State<WMainScreen> {
       await frameService.initialize();
       final frameBytes = await frameService.captureFrame();
       final compressed = frameService.compressFrame(frameBytes);
-      await _brainService!.sendFrame(compressed, context: {
-        'source': 'manual_photo',
-        'timestamp': DateTime.now().toIso8601String(),
-      });
+
+      await _brainService!.sendReport(
+        type: 'frame',
+        data: base64Encode(compressed),
+        context: {
+          'source': 'manual_photo',
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+
       if (mounted) {
         setState(() {
-          _alerts.insert(0, WAlertModel(type: 'manual_photo', message: 'Manual photo sent successfully', severity: 'low'));
+          _alerts.insert(0, WAlertModel(
+            type: 'manual_photo',
+            message: 'Manual photo sent successfully',
+            severity: 'low',
+          ));
         });
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Test photo sent to Brain')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ Test photo sent to Brain')),
+        );
       }
       await frameService.dispose();
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Photo failed: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Photo failed: $e')),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isCapturing = false);
     }
@@ -199,7 +373,11 @@ class _WMainScreenState extends State<WMainScreen> {
   @override
   Widget build(BuildContext context) {
     if (!_isInitialized) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator(color: Colors.amber)));
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(color: Colors.amber),
+        ),
+      );
     }
 
     return Scaffold(
@@ -217,7 +395,8 @@ class _WMainScreenState extends State<WMainScreen> {
               children: [
                 WStatusIndicator(isOnline: _isOnline),
                 const SizedBox(width: 4),
-                Text(_isOnline ? 'Online' : 'Offline', style: const TextStyle(fontSize: 12)),
+                Text(_isOnline ? 'Online' : 'Offline',
+                    style: const TextStyle(fontSize: 12)),
               ],
             ),
           ),
@@ -227,7 +406,9 @@ class _WMainScreenState extends State<WMainScreen> {
                 final prefs = await SharedPreferences.getInstance();
                 await prefs.remove('device_name');
                 await prefs.remove('brain_url');
-                if (mounted) Navigator.of(context).pushReplacementNamed('/connect');
+                if (mounted) {
+                  Navigator.of(context).pushReplacementNamed('/connect');
+                }
               }
             },
             itemBuilder: (_) => const [
@@ -255,9 +436,9 @@ class _WMainScreenState extends State<WMainScreen> {
             const SizedBox(height: 24),
             _buildActionButtons(),
             const SizedBox(height: 24),
-            Align(alignment: Alignment.centerLeft, child: Text('Activity Log', style: Theme.of(context).textTheme.titleMedium)),
-            const SizedBox(height: 12),
-            _buildAlertsList(),
+            _buildQuickTextCard(),
+            const SizedBox(height: 24),
+            _buildActivityLog(),
           ],
         ),
       ),
@@ -273,10 +454,16 @@ class _WMainScreenState extends State<WMainScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            _statusRow('Brain Connection', _isOnline ? '🟢 Connected' : '🔴 Disconnected'),
+            _statusRow('Brain Connection',
+                _isOnline ? '🟢 Connected' : '🔴 Disconnected'),
             _statusRow('Device ID', _brainService?.deviceName ?? 'Worker'),
             const Divider(height: 24),
-            _statusRow('Last Sync', _lastSync == null ? 'Never' : '${_lastSync!.hour}:${_lastSync!.minute.toString().padLeft(2, '0')}'),
+            _statusRow(
+              'Last Sync',
+              _lastSync == null
+                  ? 'Never'
+                  : '${_lastSync!.hour}:${_lastSync!.minute.toString().padLeft(2, '0')}',
+            ),
           ],
         ),
       ),
@@ -284,8 +471,6 @@ class _WMainScreenState extends State<WMainScreen> {
   }
 
   Widget _buildMediaController() {
-    // Use try-based provider lookup — services load in background (Phase 2)
-    // and may not be in the provider tree yet when main screen first renders.
     WMediaPlaybackController? media;
     WSpeakerController? speaker;
     try {
@@ -307,15 +492,21 @@ class _WMainScreenState extends State<WMainScreen> {
               children: [
                 const Icon(Icons.music_note, color: Colors.amber),
                 const SizedBox(width: 8),
-                const Text('Media Controller', style: TextStyle(fontWeight: FontWeight.bold)),
+                const Text('Media Controller',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
                 if (!servicesReady) ...[
                   const Spacer(),
                   const SizedBox(
-                    width: 14, height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.amber),
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.amber,
+                    ),
                   ),
                   const SizedBox(width: 8),
-                  const Text('Loading...', style: TextStyle(fontSize: 11, color: Colors.grey)),
+                  const Text('Loading...',
+                      style: TextStyle(fontSize: 11, color: Colors.grey)),
                 ],
               ],
             ),
@@ -324,15 +515,25 @@ class _WMainScreenState extends State<WMainScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  IconButton(icon: const Icon(Icons.skip_previous), onPressed: () => media!.stop()),
+                  IconButton(
+                    icon: const Icon(Icons.skip_previous),
+                    onPressed: () => media!.stop(),
+                  ),
                   IconButton(
                     icon: Icon(
-                      media!.isPlaying ? Icons.pause_circle : Icons.play_circle,
-                      size: 48, color: Colors.amber,
+                      media!.isPlaying
+                          ? Icons.pause_circle
+                          : Icons.play_circle,
+                      size: 48,
+                      color: Colors.amber,
                     ),
-                    onPressed: () => media!.isPlaying ? media.pause() : media.resume(),
+                    onPressed: () =>
+                    media!.isPlaying ? media.pause() : media.resume(),
                   ),
-                  IconButton(icon: const Icon(Icons.skip_next), onPressed: () => media!.stop()),
+                  IconButton(
+                    icon: const Icon(Icons.skip_next),
+                    onPressed: () => media!.stop(),
+                  ),
                 ],
               ),
               Slider(
@@ -363,16 +564,20 @@ class _WMainScreenState extends State<WMainScreen> {
   Widget _buildFeatureToggles() {
     return Column(
       children: [
-        _featureToggle('Motion Monitoring', 'Detect and send movement', _motionEnabled, _toggleMotion, Colors.red),
+        _featureToggle('Motion Monitoring', 'Detect and send movement',
+            _motionEnabled, _toggleMotion, Colors.red),
         const SizedBox(height: 8),
-        _featureToggle('Voice Detection', 'Listen for audio events', _voiceEnabled, _toggleVoice, Colors.purple),
+        _featureToggle('Voice Detection', 'Listen for audio events',
+            _voiceEnabled, _toggleVoice, Colors.purple),
         const SizedBox(height: 8),
-        _featureToggle('Local Recording', 'Save buffer to phone', _recordingEnabled, _toggleRecording, Colors.blue),
+        _featureToggle('Local Recording', 'Save buffer to phone',
+            _recordingEnabled, _toggleRecording, Colors.blue),
       ],
     );
   }
 
-  Widget _featureToggle(String title, String subtitle, bool val, Function(bool) onChanged, Color color) {
+  Widget _featureToggle(String title, String subtitle, bool val,
+      Function(bool) onChanged, Color color) {
     return Card(
       elevation: 0,
       color: val ? color.withOpacity(0.05) : Colors.grey[50],
@@ -393,8 +598,20 @@ class _WMainScreenState extends State<WMainScreen> {
           child: ElevatedButton.icon(
             onPressed: _isCapturing ? null : _takePhoto,
             icon: const Icon(Icons.camera_alt),
-            label: _isCapturing ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Test Photo'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
+            label: _isCapturing
+                ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+                : const Text('Test Photo'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
           ),
         ),
         const SizedBox(width: 12),
@@ -403,9 +620,71 @@ class _WMainScreenState extends State<WMainScreen> {
             onPressed: () => Navigator.pushNamed(context, '/controls'),
             icon: const Icon(Icons.settings_remote),
             label: const Text('Controls'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blueGrey, foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueGrey,
+              foregroundColor: Colors.white,
+            ),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildQuickTextCard() {
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Quick Text (Max 10 Letters)",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _textController,
+              maxLength: 10,
+              decoration: const InputDecoration(
+                hintText: "Enter text...",
+                border: OutlineInputBorder(),
+                counterText: "",
+              ),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: () async {
+                if (_textController.text.isEmpty) return;
+
+                final voice = WVoiceService();
+                await voice.initialize();
+                await voice.speak(_textController.text);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.amber,
+                foregroundColor: Colors.black,
+              ),
+              child: const Text("Speak"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActivityLog() {
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Activity Log',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildAlertsList(),
       ],
     );
   }
@@ -415,13 +694,23 @@ class _WMainScreenState extends State<WMainScreen> {
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [Text(label, style: const TextStyle(color: Colors.black54)), Text(value, style: const TextStyle(fontWeight: FontWeight.bold))],
+        children: [
+          Text(label, style: const TextStyle(color: Colors.black54)),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+        ],
       ),
     );
   }
 
   Widget _buildAlertsList() {
-    if (_alerts.isEmpty) return const Center(child: Padding(padding: EdgeInsets.all(24), child: Text('No events recorded')));
+    if (_alerts.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('No events recorded'),
+        ),
+      );
+    }
     return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -433,7 +722,23 @@ class _WMainScreenState extends State<WMainScreen> {
 
   @override
   void dispose() {
+    // Cancel all timers
     _syncTimer?.cancel();
+    _motionTimer?.cancel();
+
+    // Dispose frame service
+    _frameService?.dispose();
+
+    // Stop and dispose voice service
+    _voiceService?.stopListening();
+    _voiceService?.dispose();
+
+    // Dispose motion detector
+    _motionDetector?.dispose();
+
+    // Dispose text controller
+    _textController.dispose();
+
     super.dispose();
   }
 }

@@ -10,7 +10,6 @@ import 'package:worker/screens/register_screen.dart';
 import 'package:worker/screens/main_screen.dart';
 import 'package:worker/screens/chat_screen.dart';
 import 'package:worker/screens/child_control_screen.dart';
-import 'package:worker/screens/transition_screen.dart';
 
 // Services
 import 'package:worker/services/chat_service.dart';
