@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_background_service/flutter_background_service.dart';
@@ -31,6 +32,8 @@ class _WMainScreenState extends State<WMainScreen> {
   bool _isCapturing = false;
   bool _isInitialized = false;
   WMotionDetector? _motionDetector;
+  WFrameService? _frameService;  // 👈 ADD THIS
+  Timer? _motionTimer;
   final TextEditingController _textController = TextEditingController();
   // Feature toggles
   bool _motionEnabled = false;
@@ -160,19 +163,71 @@ class _WMainScreenState extends State<WMainScreen> {
     await _prefs.setBool('motion_enabled', value);
 
     if (value) {
-      _motionDetector ??= WMotionDetector(motionThreshold: 0.15);
-      // Start camera feed in your FrameService
-      FlutterBackgroundService().invoke('toggle_camera', {'enable': true});
+      try {
+        // Request camera permissions first
+        await Permission.camera.request();
+        await Permission.microphone.request();
+
+        // Initialize camera in MAIN thread
+        final frameService = WFrameService();
+        await frameService.initialize();
+
+        // Create motion detector
+        _motionDetector = WMotionDetector(motionThreshold: 0.15);
+
+        // Store frame service as instance variable so we can access it in dispose
+        // Add this at the top of _WMainScreenState:
+        // late WFrameService _frameService;
+        _frameService = frameService;
+
+        // Start continuous frame capture loop
+        Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+          // CRITICAL: Check if motion is still enabled AND widget is mounted
+          if (!_motionEnabled || !mounted) {
+            timer.cancel();
+            // Don't dispose here - dispose in _toggleMotion when turning OFF
+            return;
+          }
+
+          try {
+            final frameBytes = await frameService.captureFrame();
+            final hasMotion = await _motionDetector!.detectMotion(frameBytes);
+
+            if (hasMotion && _brainService != null) {
+              final compressed = frameService.compressFrame(frameBytes);
+              await _brainService!.sendFrame(compressed, context: {
+                'source': 'motion_detection',
+                'timestamp': DateTime.now().toIso8601String(),
+              });
+              print('[Motion] Detected and sent frame');
+            }
+          } catch (e) {
+            print('[Motion] Frame capture error: $e');
+          }
+        });
+
+        _showConfirmation('Motion Monitoring', true);
+      } catch (e) {
+        print('[Motion] Init error: $e');
+        setState(() => _motionEnabled = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Motion detection failed: $e')),
+        );
+      }
     } else {
-      // Optionally dispose detector when motion is OFF
+      // STOP motion detection - dispose BEFORE turning off flag
       _motionDetector?.dispose();
       _motionDetector = null;
-      FlutterBackgroundService().invoke('toggle_camera', {'enable': false});
+
+      // Dispose the frame service
+      if (_frameService != null) {
+        await _frameService!.dispose();
+        _frameService = null;
+      }
+
+      _showConfirmation('Motion Monitoring', false);
     }
-
-    _showConfirmation('Motion Monitoring', value);
   }
-
   Future<void> _toggleVoice(bool value) async {
     setState(() => _voiceEnabled = value);
     await _prefs.setBool('voice_enabled', value);
@@ -551,7 +606,9 @@ class _WMainScreenState extends State<WMainScreen> {
   @override
   void dispose() {
     _syncTimer?.cancel();
-    _textController.dispose(); // 🔥 add this
+    _motionTimer?.cancel();
+    _frameService?.dispose();
+    _textController.dispose();
     super.dispose();
   }
 }
