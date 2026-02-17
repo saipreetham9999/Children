@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -32,9 +34,11 @@ class _WMainScreenState extends State<WMainScreen> {
   bool _isCapturing = false;
   bool _isInitialized = false;
   WMotionDetector? _motionDetector;
-  WFrameService? _frameService;  // 👈 ADD THIS
-  Timer? _motionTimer;
+  WFrameService? _frameService;
+  Timer? _motionTimer;  // Track motion timer
+  WVoiceService? _voiceService;  // Track voice service
   final TextEditingController _textController = TextEditingController();
+
   // Feature toggles
   bool _motionEnabled = false;
   bool _voiceEnabled = false;
@@ -156,8 +160,7 @@ class _WMainScreenState extends State<WMainScreen> {
     );
   }
 
-
-
+  /// Toggle Motion Detection
   Future<void> _toggleMotion(bool value) async {
     setState(() => _motionEnabled = value);
     await _prefs.setBool('motion_enabled', value);
@@ -174,18 +177,13 @@ class _WMainScreenState extends State<WMainScreen> {
 
         // Create motion detector
         _motionDetector = WMotionDetector(motionThreshold: 0.15);
-
-        // Store frame service as instance variable so we can access it in dispose
-        // Add this at the top of _WMainScreenState:
-        // late WFrameService _frameService;
         _frameService = frameService;
 
         // Start continuous frame capture loop
-        Timer.periodic(const Duration(milliseconds: 100), (timer) async {
+        _motionTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) async {
           // CRITICAL: Check if motion is still enabled AND widget is mounted
           if (!_motionEnabled || !mounted) {
             timer.cancel();
-            // Don't dispose here - dispose in _toggleMotion when turning OFF
             return;
           }
 
@@ -195,27 +193,34 @@ class _WMainScreenState extends State<WMainScreen> {
 
             if (hasMotion && _brainService != null) {
               final compressed = frameService.compressFrame(frameBytes);
-              await _brainService!.sendFrame(compressed, context: {
-                'source': 'motion_detection',
-                'timestamp': DateTime.now().toIso8601String(),
-              });
-              print('[Motion] Detected and sent frame');
+              await _brainService!.sendReport(
+                type: 'frame',
+                data: base64Encode(compressed),
+                context: {
+                  'source': 'motion_detection',
+                  'timestamp': DateTime.now().toIso8601String(),
+                },
+              );
+              print('[Motion] ✅ Detected and sent frame');
             }
           } catch (e) {
-            print('[Motion] Frame capture error: $e');
+            print('[Motion] ❌ Frame capture error: $e');
           }
         });
 
         _showConfirmation('Motion Monitoring', true);
       } catch (e) {
-        print('[Motion] Init error: $e');
+        print('[Motion] ❌ Init error: $e');
         setState(() => _motionEnabled = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Motion detection failed: $e')),
         );
       }
     } else {
-      // STOP motion detection - dispose BEFORE turning off flag
+      // STOP motion detection - cancel timer first
+      _motionTimer?.cancel();
+      _motionTimer = null;
+
       _motionDetector?.dispose();
       _motionDetector = null;
 
@@ -228,21 +233,22 @@ class _WMainScreenState extends State<WMainScreen> {
       _showConfirmation('Motion Monitoring', false);
     }
   }
+
+  /// Toggle Voice Detection (SINGLE METHOD - NO DUPLICATES)
   Future<void> _toggleVoice(bool value) async {
     setState(() => _voiceEnabled = value);
     await _prefs.setBool('voice_enabled', value);
-
-    final voice = WVoiceService();
 
     if (value) {
       try {
         print('[Main] Voice Detection: ON');
 
-        // Initialize voice service
-        await voice.initialize();
+        // Create or initialize voice service
+        _voiceService = WVoiceService();
+        await _voiceService!.initialize();
 
         // Set callback for when voice is detected
-        voice.onSpeechResult = (recognizedText) async {
+        _voiceService!.onSpeechResult = (recognizedText, audioBytes) async {
           print('[Main] 🎤 Voice detected: "$recognizedText"');
 
           if (_brainService != null && recognizedText.isNotEmpty) {
@@ -253,10 +259,26 @@ class _WMainScreenState extends State<WMainScreen> {
                 data: recognizedText,
                 context: {
                   'source': 'voice_detection',
+                  'audio_bytes': recognizedText,
                   'timestamp': DateTime.now().toIso8601String(),
                 },
               );
               print('[Main] ✅ Voice text sent to brain');
+              // Send audio bytes if available
+              if (audioBytes != null && audioBytes.isNotEmpty) {
+                await _brainService!.sendReport(
+                  type: 'audio',
+                  data: base64Encode(audioBytes),  // Encode to base64
+                  context: {
+                    'source': 'voice_detection',
+                    'timestamp': DateTime.now().toIso8601String(),
+                  },
+                );
+                print('[Main] ✅ Audio sent to brain (${audioBytes.length} bytes)');
+              } else {
+                print('[Main] ⚠️ No audio bytes captured');
+              }
+
 
               // Update UI with detected voice
               if (mounted) {
@@ -275,7 +297,7 @@ class _WMainScreenState extends State<WMainScreen> {
         };
 
         // Start continuous listening
-        await voice.startListening(
+        await _voiceService!.startListening(
           timeout: const Duration(minutes: 5),
         );
 
@@ -291,18 +313,21 @@ class _WMainScreenState extends State<WMainScreen> {
     } else {
       // Stop voice detection
       print('[Main] Voice Detection: OFF');
-      await voice.stopListening();
+      await _voiceService?.stopListening();
+      _voiceService?.dispose();
+      _voiceService = null;
       _showConfirmation('Voice Detection', false);
     }
   }
 
-
+  /// Toggle Recording
   Future<void> _toggleRecording(bool value) async {
     setState(() => _recordingEnabled = value);
     await _prefs.setBool('recording_enabled', value);
     _showConfirmation('Local Recording', value);
   }
 
+  /// Take manual photo
   Future<void> _takePhoto() async {
     if (_brainService == null) return;
     setState(() => _isCapturing = true);
@@ -311,23 +336,35 @@ class _WMainScreenState extends State<WMainScreen> {
       await frameService.initialize();
       final frameBytes = await frameService.captureFrame();
       final compressed = frameService.compressFrame(frameBytes);
-      await _brainService!.sendFrame(compressed, context: {
-        'source': 'manual_photo',
-        'timestamp': DateTime.now().toIso8601String(),
-      });
+
+      await _brainService!.sendReport(
+        type: 'frame',
+        data: base64Encode(compressed),
+        context: {
+          'source': 'manual_photo',
+          'timestamp': DateTime.now().toIso8601String(),
+        },
+      );
+
       if (mounted) {
         setState(() {
-          _alerts.insert(0, WAlertModel(type: 'manual_photo',
-              message: 'Manual photo sent successfully',
-              severity: 'low'));
+          _alerts.insert(0, WAlertModel(
+            type: 'manual_photo',
+            message: 'Manual photo sent successfully',
+            severity: 'low',
+          ));
         });
         ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('✅ Test photo sent to Brain')));
+          const SnackBar(content: Text('✅ Test photo sent to Brain')),
+        );
       }
       await frameService.dispose();
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Photo failed: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Photo failed: $e')),
+        );
+      }
     } finally {
       if (mounted) setState(() => _isCapturing = false);
     }
@@ -337,7 +374,10 @@ class _WMainScreenState extends State<WMainScreen> {
   Widget build(BuildContext context) {
     if (!_isInitialized) {
       return const Scaffold(
-          body: Center(child: CircularProgressIndicator(color: Colors.amber)));
+        body: Center(
+          child: CircularProgressIndicator(color: Colors.amber),
+        ),
+      );
     }
 
     return Scaffold(
@@ -366,12 +406,12 @@ class _WMainScreenState extends State<WMainScreen> {
                 final prefs = await SharedPreferences.getInstance();
                 await prefs.remove('device_name');
                 await prefs.remove('brain_url');
-                if (mounted) Navigator.of(context).pushReplacementNamed(
-                    '/connect');
+                if (mounted) {
+                  Navigator.of(context).pushReplacementNamed('/connect');
+                }
               }
             },
-            itemBuilder: (_) =>
-            const [
+            itemBuilder: (_) => const [
               PopupMenuItem(
                 value: 'reconnect',
                 child: Row(children: [
@@ -396,63 +436,9 @@ class _WMainScreenState extends State<WMainScreen> {
             const SizedBox(height: 24),
             _buildActionButtons(),
             const SizedBox(height: 24),
-
-// 🔥 NEW 10-Character Text Input Card
-            Card(
-              elevation: 2,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      "Quick Text (Max 10 Letters)",
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _textController,
-                      maxLength: 10,
-                      decoration: const InputDecoration(
-                        hintText: "Enter text...",
-                        border: OutlineInputBorder(),
-                        counterText: "", // hides 0/10 counter
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    ElevatedButton(
-                      onPressed: () async {
-                        if (_textController.text.isEmpty) return;
-
-                        final voice = WVoiceService();
-                        await voice.initialize();
-                        await voice.speak(_textController.text);
-                      },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.amber,
-                        foregroundColor: Colors.black,
-                      ),
-                      child: const Text("Speak"),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-
+            _buildQuickTextCard(),
             const SizedBox(height: 24),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Activity Log',
-                style: Theme
-                    .of(context)
-                    .textTheme
-                    .titleMedium,
-              ),
-            ),
-
-            const SizedBox(height: 12),
-            _buildAlertsList(),
+            _buildActivityLog(),
           ],
         ),
       ),
@@ -472,9 +458,12 @@ class _WMainScreenState extends State<WMainScreen> {
                 _isOnline ? '🟢 Connected' : '🔴 Disconnected'),
             _statusRow('Device ID', _brainService?.deviceName ?? 'Worker'),
             const Divider(height: 24),
-            _statusRow('Last Sync',
-                _lastSync == null ? 'Never' : '${_lastSync!.hour}:${_lastSync!
-                    .minute.toString().padLeft(2, '0')}'),
+            _statusRow(
+              'Last Sync',
+              _lastSync == null
+                  ? 'Never'
+                  : '${_lastSync!.hour}:${_lastSync!.minute.toString().padLeft(2, '0')}',
+            ),
           ],
         ),
       ),
@@ -482,8 +471,6 @@ class _WMainScreenState extends State<WMainScreen> {
   }
 
   Widget _buildMediaController() {
-    // Use try-based provider lookup — services load in background (Phase 2)
-    // and may not be in the provider tree yet when main screen first renders.
     WMediaPlaybackController? media;
     WSpeakerController? speaker;
     try {
@@ -510,9 +497,12 @@ class _WMainScreenState extends State<WMainScreen> {
                 if (!servicesReady) ...[
                   const Spacer(),
                   const SizedBox(
-                    width: 14, height: 14,
+                    width: 14,
+                    height: 14,
                     child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.amber),
+                      strokeWidth: 2,
+                      color: Colors.amber,
+                    ),
                   ),
                   const SizedBox(width: 8),
                   const Text('Loading...',
@@ -525,18 +515,25 @@ class _WMainScreenState extends State<WMainScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
-                  IconButton(icon: const Icon(Icons.skip_previous),
-                      onPressed: () => media!.stop()),
+                  IconButton(
+                    icon: const Icon(Icons.skip_previous),
+                    onPressed: () => media!.stop(),
+                  ),
                   IconButton(
                     icon: Icon(
-                      media!.isPlaying ? Icons.pause_circle : Icons.play_circle,
-                      size: 48, color: Colors.amber,
+                      media!.isPlaying
+                          ? Icons.pause_circle
+                          : Icons.play_circle,
+                      size: 48,
+                      color: Colors.amber,
                     ),
                     onPressed: () =>
                     media!.isPlaying ? media.pause() : media.resume(),
                   ),
-                  IconButton(icon: const Icon(Icons.skip_next),
-                      onPressed: () => media!.stop()),
+                  IconButton(
+                    icon: const Icon(Icons.skip_next),
+                    onPressed: () => media!.stop(),
+                  ),
                 ],
               ),
               Slider(
@@ -548,17 +545,16 @@ class _WMainScreenState extends State<WMainScreen> {
               ),
               Text('Volume: ${speaker.volumePercent}',
                   style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            ] else
-              ...[
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Text(
-                    'Media & volume controls loading in background...',
-                    style: TextStyle(color: Colors.grey, fontSize: 13),
-                    textAlign: TextAlign.center,
-                  ),
+            ] else ...[
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'Media & volume controls loading in background...',
+                  style: TextStyle(color: Colors.grey, fontSize: 13),
+                  textAlign: TextAlign.center,
                 ),
-              ],
+              ),
+            ],
           ],
         ),
       ),
@@ -568,17 +564,14 @@ class _WMainScreenState extends State<WMainScreen> {
   Widget _buildFeatureToggles() {
     return Column(
       children: [
-        _featureToggle(
-            'Motion Monitoring', 'Detect and send movement', _motionEnabled,
-            _toggleMotion, Colors.red),
+        _featureToggle('Motion Monitoring', 'Detect and send movement',
+            _motionEnabled, _toggleMotion, Colors.red),
         const SizedBox(height: 8),
-        _featureToggle(
-            'Voice Detection', 'Listen for audio events', _voiceEnabled,
-            _toggleVoice, Colors.purple),
+        _featureToggle('Voice Detection', 'Listen for audio events',
+            _voiceEnabled, _toggleVoice, Colors.purple),
         const SizedBox(height: 8),
-        _featureToggle(
-            'Local Recording', 'Save buffer to phone', _recordingEnabled,
-            _toggleRecording, Colors.blue),
+        _featureToggle('Local Recording', 'Save buffer to phone',
+            _recordingEnabled, _toggleRecording, Colors.blue),
       ],
     );
   }
@@ -605,13 +598,20 @@ class _WMainScreenState extends State<WMainScreen> {
           child: ElevatedButton.icon(
             onPressed: _isCapturing ? null : _takePhoto,
             icon: const Icon(Icons.camera_alt),
-            label: _isCapturing ? const SizedBox(width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                    strokeWidth: 2, color: Colors.white)) : const Text(
-                'Test Photo'),
+            label: _isCapturing
+                ? const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            )
+                : const Text('Test Photo'),
             style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue, foregroundColor: Colors.white),
+              backgroundColor: Colors.blue,
+              foregroundColor: Colors.white,
+            ),
           ),
         ),
         const SizedBox(width: 12),
@@ -620,10 +620,71 @@ class _WMainScreenState extends State<WMainScreen> {
             onPressed: () => Navigator.pushNamed(context, '/controls'),
             icon: const Icon(Icons.settings_remote),
             label: const Text('Controls'),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.blueGrey,
-                foregroundColor: Colors.white),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blueGrey,
+              foregroundColor: Colors.white,
+            ),
           ),
         ),
+      ],
+    );
+  }
+
+  Widget _buildQuickTextCard() {
+    return Card(
+      elevation: 2,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Quick Text (Max 10 Letters)",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _textController,
+              maxLength: 10,
+              decoration: const InputDecoration(
+                hintText: "Enter text...",
+                border: OutlineInputBorder(),
+                counterText: "",
+              ),
+            ),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: () async {
+                if (_textController.text.isEmpty) return;
+
+                final voice = WVoiceService();
+                await voice.initialize();
+                await voice.speak(_textController.text);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.amber,
+                foregroundColor: Colors.black,
+              ),
+              child: const Text("Speak"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActivityLog() {
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            'Activity Log',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildAlertsList(),
       ],
     );
   }
@@ -635,15 +696,21 @@ class _WMainScreenState extends State<WMainScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: const TextStyle(color: Colors.black54)),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.bold))
+          Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
         ],
       ),
     );
   }
 
   Widget _buildAlertsList() {
-    if (_alerts.isEmpty) return const Center(child: Padding(
-        padding: EdgeInsets.all(24), child: Text('No events recorded')));
+    if (_alerts.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text('No events recorded'),
+        ),
+      );
+    }
     return ListView.separated(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
@@ -655,18 +722,23 @@ class _WMainScreenState extends State<WMainScreen> {
 
   @override
   void dispose() {
+    // Cancel all timers
     _syncTimer?.cancel();
     _motionTimer?.cancel();
+
+    // Dispose frame service
     _frameService?.dispose();
 
+    // Stop and dispose voice service
+    _voiceService?.stopListening();
+    _voiceService?.dispose();
 
-    if (_voiceEnabled) {
-      final voice = WVoiceService();
-      voice.stopListening();
-      voice.dispose();
-    }
+    // Dispose motion detector
+    _motionDetector?.dispose();
 
+    // Dispose text controller
     _textController.dispose();
+
     super.dispose();
   }
 }

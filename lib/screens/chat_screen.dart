@@ -15,19 +15,31 @@ class WChatScreen extends StatefulWidget {
 
 class _WChatScreenState extends State<WChatScreen> {
   final _messageController = TextEditingController();
-  final _voiceService = WVoiceService();
+  late WVoiceService _voiceService;
   bool _isVoiceMode = false;
   bool _isListening = false;
+
 
   @override
   void initState() {
     super.initState();
-    _voiceService.onSpeechResult = _onVoiceResult;
+    _voiceService = WVoiceService();
+
+    // New callback signature: (recognizedText, audioBytes)
+    _voiceService.onSpeechResult = (recognizedText, audioBytes) {
+      print('[ChatScreen] Voice result: $recognizedText');
+      _messageController.text = recognizedText;
+      setState(() => _isListening = false);
+    };
   }
+
 
   @override
   void dispose() {
     _messageController.dispose();
+    if (_isListening) {
+      _voiceService.stopListening();
+    }
     _voiceService.dispose();
     super.dispose();
   }
@@ -60,8 +72,19 @@ class _WChatScreenState extends State<WChatScreen> {
       await _voiceService.stopListening();
       setState(() => _isListening = false);
     } else {
-      setState(() => _isListening = true);
-      await _voiceService.startListening(timeout: Duration(seconds: 10));
+      try {
+        await _voiceService.initialize();  // Initialize before listening
+        setState(() => _isListening = true);
+        await _voiceService.startListening(
+          timeout: const Duration(seconds: 10),
+        );
+      } catch (e) {
+        print('[ChatScreen] Voice error: $e');
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Voice failed: $e')),
+        );
+        setState(() => _isListening = false);
+      }
     }
   }
 

@@ -9,12 +9,13 @@ class WVoiceService {
 
   late FlutterTts _tts;
   late stt.SpeechToText _speechToText;
+
   bool _isSpeaking = false;
   bool _isListening = false;
   Timer? _listeningTimer;
 
   // Callbacks
-  Function(String)? onSpeechResult;
+  Function(String recognizedText, List<int>? audioBytes)? onSpeechResult;
   Function(String)? onSpeakComplete;
 
   bool get isSpeaking => _isSpeaking;
@@ -23,6 +24,7 @@ class WVoiceService {
   Future<void> initialize() async {
     print('[VoiceService] Initializing...');
 
+    // Initialize TTS
     _tts = FlutterTts();
     await _tts.setLanguage("en-US");
     await _tts.setSpeechRate(0.8);
@@ -35,6 +37,7 @@ class WVoiceService {
       print('[VoiceService] ✅ TTS completed');
     });
 
+    // Initialize Speech-to-Text
     _speechToText = stt.SpeechToText();
     final available = await _speechToText.initialize(
       onError: (error) => print('[VoiceService] Speech error: $error'),
@@ -48,6 +51,66 @@ class WVoiceService {
     }
 
     print('[VoiceService] ✅ Initialized');
+  }
+
+  /// Start continuous listening with audio capture via speech_to_text
+  Future<void> startListening({
+    Duration timeout = const Duration(seconds: 10),
+    String language = 'en-US',
+  }) async {
+    if (_isListening) {
+      print('[VoiceService] Already listening');
+      return;
+    }
+
+    if (!_speechToText.isAvailable) {
+      print('[VoiceService] Speech recognition not available');
+      return;
+    }
+
+    print('[VoiceService] Starting continuous listening...');
+    _isListening = true;
+    _startListeningLoop(timeout, language);
+  }
+
+  /// Internal method - handles continuous listening loop
+  void _startListeningLoop(Duration timeout, String language) {
+    if (!_isListening) return;
+
+    print('[VoiceService] Listening cycle started...');
+
+    try {
+      _speechToText.listen(
+        onResult: (result) {
+
+          // When speech is finalized
+          if (result.finalResult && result.recognizedWords.isNotEmpty) {
+            print('[VoiceService] ✅ Final: "${result.recognizedWords}"');
+            _isListening = false;
+
+            // Note: speech_to_text library doesn't directly expose audio bytes
+            // Brain will receive text with timestamp - it can sync with audio if needed
+            // Pass null for audio bytes since speech_to_text doesn't provide them
+            onSpeechResult?.call(result.recognizedWords, null);
+
+            // Auto-restart listening
+            if (_listeningTimer != null) {
+              Future.delayed(const Duration(milliseconds: 500), () {
+                if (_listeningTimer != null) {
+                  _startListeningLoop(timeout, language);
+                }
+              });
+            }
+          }
+        },
+        listenFor: timeout,
+        pauseFor: timeout,
+        localeId: language,
+      );
+    } catch (e) {
+      print('[VoiceService] Listening error: $e');
+      _isListening = false;
+    }
   }
 
   Future<void> speak(String text, {String speaker = 'default'}) async {
@@ -71,67 +134,6 @@ class WVoiceService {
     _isSpeaking = false;
   }
 
-  /// Start continuous listening - will auto-restart until stopListening() called
-  Future<void> startListening({
-    Duration timeout = const Duration(seconds: 10),
-    String language = 'en-US',
-  }) async {
-    if (_isListening) {
-      print('[VoiceService] Already listening');
-      return;
-    }
-
-    if (!_speechToText.isAvailable) {
-      print('[VoiceService] Speech recognition not available');
-      return;
-    }
-
-    print('[VoiceService] Starting continuous listening...');
-    _isListening = true;
-
-    // Start listening loop
-    _startListeningLoop(timeout, language);
-  }
-
-  /// Internal method - handles the continuous listening loop
-  void _startListeningLoop(Duration timeout, String language) {
-    if (!_isListening) return;
-
-    print('[VoiceService] Listening cycle started...');
-
-    try {
-      _speechToText.listen(
-        onResult: (result) {
-
-          // When final result received
-          if (result.finalResult && result.recognizedWords.isNotEmpty) {
-            print('[VoiceService] Final: "${result.recognizedWords}"');
-            _isListening = false;
-
-            // Call the callback with detected text
-            onSpeechResult?.call(result.recognizedWords);
-
-            // Auto-restart listening if still enabled
-            if (_isListening == false && _listeningTimer != null) {
-              Future.delayed(const Duration(milliseconds: 500), () {
-                if (_listeningTimer != null) {
-                  _startListeningLoop(timeout, language);
-                }
-              });
-            }
-          }
-        },
-        listenFor: timeout,
-        pauseFor: timeout,
-        localeId: language,
-      );
-    } catch (e) {
-      print('[VoiceService] Listening error: $e');
-      _isListening = false;
-    }
-  }
-
-  /// Stop listening completely
   Future<void> stopListening() async {
     if (!_isListening) return;
     print('[VoiceService] Stopping listener');
@@ -159,7 +161,7 @@ class WVoiceService {
     String? result;
     Completer<String?> completer = Completer();
 
-    final onResult = (String text) {
+    final onResult = (String text, List<int>? _) {
       if (!completer.isCompleted) {
         completer.complete(text);
       }
