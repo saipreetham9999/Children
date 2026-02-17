@@ -235,15 +235,65 @@ class _WMainScreenState extends State<WMainScreen> {
     final voice = WVoiceService();
 
     if (value) {
-      await voice.initialize();
-      await voice.startListening(
-        timeout: const Duration(minutes: 5),
-      );
-    } else {
-      await voice.stopListening();
-    }
+      try {
+        print('[Main] Voice Detection: ON');
 
-    _showConfirmation('Voice Detection', value);
+        // Initialize voice service
+        await voice.initialize();
+
+        // Set callback for when voice is detected
+        voice.onSpeechResult = (recognizedText) async {
+          print('[Main] 🎤 Voice detected: "$recognizedText"');
+
+          if (_brainService != null && recognizedText.isNotEmpty) {
+            try {
+              // Send text report to brain
+              await _brainService!.sendReport(
+                type: 'voice_text',
+                data: recognizedText,
+                context: {
+                  'source': 'voice_detection',
+                  'timestamp': DateTime.now().toIso8601String(),
+                },
+              );
+              print('[Main] ✅ Voice text sent to brain');
+
+              // Update UI with detected voice
+              if (mounted) {
+                setState(() {
+                  _alerts.insert(0, WAlertModel(
+                    type: 'voice_detection',
+                    message: 'Voice: $recognizedText',
+                    severity: 'medium',
+                  ));
+                });
+              }
+            } catch (e) {
+              print('[Main] ❌ Voice send error: $e');
+            }
+          }
+        };
+
+        // Start continuous listening
+        await voice.startListening(
+          timeout: const Duration(minutes: 5),
+        );
+
+        _showConfirmation('Voice Detection', true);
+        print('[Main] Voice Detection: Listening started');
+      } catch (e) {
+        print('[Main] ❌ Voice init error: $e');
+        setState(() => _voiceEnabled = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Voice detection failed: $e')),
+        );
+      }
+    } else {
+      // Stop voice detection
+      print('[Main] Voice Detection: OFF');
+      await voice.stopListening();
+      _showConfirmation('Voice Detection', false);
+    }
   }
 
 
@@ -608,6 +658,14 @@ class _WMainScreenState extends State<WMainScreen> {
     _syncTimer?.cancel();
     _motionTimer?.cancel();
     _frameService?.dispose();
+
+
+    if (_voiceEnabled) {
+      final voice = WVoiceService();
+      voice.stopListening();
+      voice.dispose();
+    }
+
     _textController.dispose();
     super.dispose();
   }
