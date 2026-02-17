@@ -3,6 +3,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/device_model.dart';
 import '../services/brain_service.dart';
+import 'dart:io';
 
 class WRegisterScreen extends StatefulWidget {
   final String brainUrl;
@@ -28,21 +29,23 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
     _detectDeviceInfo();
   }
 
+
   Future<void> _detectDeviceInfo() async {
     try {
       final deviceInfo = DeviceInfoPlugin();
+
       String deviceType = 'unknown';
       String osVersion = 'unknown';
       String deviceModel = 'unknown';
       String defaultName = 'Worker Device';
 
-      if (Theme.of(context).platform == TargetPlatform.android) {
+      if (Platform.isAndroid) {
         final androidInfo = await deviceInfo.androidInfo;
         deviceType = 'android';
         osVersion = 'Android ${androidInfo.version.release}';
         deviceModel = androidInfo.model;
         defaultName = androidInfo.model;
-      } else if (Theme.of(context).platform == TargetPlatform.iOS) {
+      } else if (Platform.isIOS) {
         final iosInfo = await deviceInfo.iosInfo;
         deviceType = 'ios';
         osVersion = 'iOS ${iosInfo.systemVersion}';
@@ -60,6 +63,7 @@ class _WRegisterScreenState extends State<WRegisterScreen> {
         );
         _nameController.text = defaultName;
       });
+
     } catch (e) {
       print('[WRegister] Device detect error: $e');
       setState(() {

@@ -29,6 +29,14 @@ class WAlertModel {
     );
   }
 
+  Map<String, dynamic> toJson() => {
+        'type': type,
+        'message': message,
+        'severity': severity,
+        'device_name': deviceName,
+        'timestamp': timestamp.toIso8601String(),
+      };
+
   String get formattedTime {
     return DateFormat('HH:mm:ss').format(timestamp);
   }
