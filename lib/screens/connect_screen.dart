@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:provider/provider.dart';
 import 'package:worker/services/brain_service.dart';
+import 'package:worker/services/ble_mesh_service.dart';
 
 class WConnectScreen extends StatefulWidget {
   const WConnectScreen({Key? key}) : super(key: key);
@@ -114,6 +116,89 @@ class _WConnectScreenState extends State<WConnectScreen> {
                   child: const Text('Skip Check & Register Anyway →', style: TextStyle(color: Colors.deepPurple)),
                 ),
               ],
+              const SizedBox(height: 32),
+              const Divider(),
+              const SizedBox(height: 16),
+              // Mesh relay option for children without WiFi to Brain
+              const Text(
+                'No WiFi to Brain?',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Connect through nearby children using BLE mesh.\n'
+                'Chat messages relay through other devices to reach Brain.',
+                style: TextStyle(color: Colors.grey, fontSize: 12),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 12),
+              Consumer<WBleMeshService>(
+                builder: (context, mesh, _) {
+                  final peers = mesh.discoveredPeers;
+                  return Column(
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: OutlinedButton.icon(
+                          onPressed: _isConnecting
+                              ? null
+                              : () async {
+                                  setState(() => _isConnecting = true);
+                                  await mesh.startScanning();
+                                  setState(() => _isConnecting = false);
+                                },
+                          icon: const Icon(Icons.bluetooth_searching),
+                          label: Text(
+                            mesh.isScanning
+                                ? 'Scanning...'
+                                : 'Scan for Nearby Kids (${peers.length} found)',
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: Colors.blue,
+                            side: const BorderSide(color: Colors.blue),
+                          ),
+                        ),
+                      ),
+                      if (peers.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        ...peers.take(5).map((peer) => ListTile(
+                              dense: true,
+                              leading: Icon(
+                                peer.isBridge ? Icons.wifi : Icons.bluetooth,
+                                color: peer.isBridge ? Colors.green : Colors.blue,
+                                size: 20,
+                              ),
+                              title: Text(peer.deviceName, style: const TextStyle(fontSize: 13)),
+                              subtitle: Text(
+                                '${peer.signalBars} ${peer.signalPercent}% • '
+                                '${peer.hopsToBrain < 99 ? "${peer.hopsToBrain} hops to Brain" : "searching..."}',
+                                style: const TextStyle(fontSize: 11),
+                              ),
+                              trailing: TextButton(
+                                onPressed: () async {
+                                  final connected = await mesh.connectToPeer(peer.deviceId);
+                                  if (connected && mounted) {
+                                    // Save as mesh-only device and proceed to register
+                                    final prefs = await SharedPreferences.getInstance();
+                                    await prefs.setString('brain_url', '');
+                                    await prefs.setBool('mesh_only', true);
+                                    if (mounted) {
+                                      Navigator.of(context).pushReplacementNamed(
+                                        '/register',
+                                        arguments: {'brainUrl': '', 'meshOnly': true},
+                                      );
+                                    }
+                                  }
+                                },
+                                child: const Text('Join', style: TextStyle(fontSize: 12)),
+                              ),
+                            )),
+                      ],
+                    ],
+                  );
+                },
+              ),
             ],
           ),
         ),

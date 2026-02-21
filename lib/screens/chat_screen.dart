@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import '../services/chat_service.dart';
 import '../services/voice_service.dart';
 import '../services/signal_strength_tracker.dart';
+import '../services/ble_mesh_service.dart';
+import '../services/mesh_chat_transport.dart';
 import '../models/chat_message.dart';
 
 /// WChatScreen — Runtime group chat with signal strength
@@ -54,6 +56,17 @@ class _WChatScreenState extends State<WChatScreen> {
     final text = _messageController.text.trim();
     if (text.isEmpty) return;
 
+    // Try mesh transport first if available
+    final meshTransport = context.read<WMeshChatTransport>();
+    if (meshTransport.isRunning) {
+      final sent = await meshTransport.sendChat(text);
+      if (sent) {
+        _messageController.clear();
+        return;
+      }
+    }
+
+    // Fallback to direct chat (original behavior)
     final chatService = context.read<WChatService>();
     final signalTracker = context.read<WSignalStrengthTracker>();
 
@@ -142,6 +155,55 @@ class _WChatScreenState extends State<WChatScreen> {
                     Text(
                       '${signal.httpLatencyMs}ms',
                       style: TextStyle(color: Colors.white, fontSize: 12),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          // Mesh network status bar
+          Consumer2<WBleMeshService, WMeshChatTransport>(
+            builder: (context, mesh, transport, _) {
+              if (!mesh.isInitialized) return const SizedBox.shrink();
+              final peers = mesh.connectedPeerCount;
+              final hops = mesh.myHopsToBrain;
+              final type = mesh.connectionType;
+              return Container(
+                color: Colors.blueGrey[800],
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Row(
+                  children: [
+                    Icon(
+                      type == BrainConnectionType.direct
+                          ? Icons.wifi
+                          : type == BrainConnectionType.relay
+                              ? Icons.device_hub
+                              : Icons.wifi_off,
+                      color: type == BrainConnectionType.none
+                          ? Colors.red[300]
+                          : Colors.greenAccent,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      type == BrainConnectionType.direct
+                          ? 'Direct'
+                          : type == BrainConnectionType.relay
+                              ? '$hops hop${hops > 1 ? 's' : ''}'
+                              : 'No route',
+                      style: const TextStyle(color: Colors.white, fontSize: 11),
+                    ),
+                    const Spacer(),
+                    Icon(Icons.bluetooth, color: Colors.blue[200], size: 14),
+                    const SizedBox(width: 4),
+                    Text(
+                      '$peers peer${peers != 1 ? 's' : ''}',
+                      style: const TextStyle(color: Colors.white70, fontSize: 11),
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      '🔗 ${transport.messagesSentViaMesh}↑ ${transport.messagesReceivedViaMesh}↓',
+                      style: const TextStyle(color: Colors.white70, fontSize: 11),
                     ),
                   ],
                 ),

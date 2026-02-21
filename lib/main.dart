@@ -22,6 +22,8 @@ import 'package:worker/services/media_playback_controller.dart';
 import 'package:worker/services/ios_child_control.dart';
 import 'package:worker/services/child_os_monitor.dart';
 import 'package:worker/services/device_policy_service.dart';
+import 'package:worker/services/ble_mesh_service.dart';
+import 'package:worker/services/mesh_chat_transport.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -44,6 +46,8 @@ class _WAppBootstrapperState extends State<WAppBootstrapper> {
   WiOSChildControl? _childControl;
   WChildOSMonitor? _childMonitor;
   WDevicePolicyService? _policyService;
+  WBleMeshService? _meshService;
+  WMeshChatTransport? _meshChatTransport;
 
   bool _isInitialized = false;
   String _bootStatus = 'Initializing...';
@@ -97,6 +101,15 @@ class _WAppBootstrapperState extends State<WAppBootstrapper> {
       _setStatus('Loading Voice Recognition...');
       final voice = WVoiceService();
       await voice.initialize();
+
+      _setStatus('Loading BLE Mesh...');
+      _meshService = WBleMeshService();
+      _meshChatTransport = WMeshChatTransport(
+        meshService: _meshService!,
+        chatService: _chatService!,
+        signalTracker: _signalTracker!,
+      );
+      await _meshChatTransport!.initialize();
 
       _setStatus('Finalizing...');
       await Future.delayed(const Duration(milliseconds: 500));
@@ -158,6 +171,8 @@ class _WAppBootstrapperState extends State<WAppBootstrapper> {
         ChangeNotifierProvider<WiOSChildControl>.value(value: _childControl!),
         ChangeNotifierProvider<WChildOSMonitor>.value(value: _childMonitor!),
         ChangeNotifierProvider<WDevicePolicyService>.value(value: _policyService!),
+        ChangeNotifierProvider<WBleMeshService>.value(value: _meshService!),
+        ChangeNotifierProvider<WMeshChatTransport>.value(value: _meshChatTransport!),
       ],
       child: const WAppContent(),
     );

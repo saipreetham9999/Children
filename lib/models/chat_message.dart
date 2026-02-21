@@ -48,6 +48,8 @@ class WChatMessage {
     switch (transportType) {
       case 'bluetooth':
         return '📡';
+      case 'mesh':
+        return '🔗';
       case 'http':
         return '☁️';
       case 'local':
