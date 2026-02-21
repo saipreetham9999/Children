@@ -123,10 +123,11 @@ class WMeshChatTransport extends ChangeNotifier {
     if (sent) {
       _messagesSentViaMesh++;
 
-      // Also add to local chat (so sender sees it immediately)
-      // Uses 'mesh' transport type to distinguish from direct HTTP
+      // Add to local chat so sender sees it immediately.
+      // Use 'You' as sender to match chat_screen.dart isOwn check (sender == 'You').
+      // The mesh message itself carries _deviceName for other devices.
       await _chatService.sendMessage(
-        _deviceName,
+        'You',
         text,
         transportType: 'mesh',
         signalStrength: _meshService.bestRelay?.signalPercent ?? 50,
